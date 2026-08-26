@@ -66,6 +66,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::patch('/admin/camp-registration-requests/{campRegistrationRequest}', [CampRegistrationRequestController::class, 'adminUpdate']);
         Route::get('/admin/dashboard-stats', [FamilyController::class, 'stats']);
         Route::apiResource('admin/families', FamilyController::class);
+        Route::get('/admin/import/families-excel-template', [ExcelImportController::class, 'familiesTemplate']);
         Route::post('/admin/import/families-excel', [ExcelImportController::class, 'importFamilies']);
         Route::post('admin/families/{family}/members', [FamilyMemberController::class, 'store']);
         Route::patch('admin/families/{family}/members/{member}', [FamilyMemberController::class, 'update']);

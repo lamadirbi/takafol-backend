@@ -11,10 +11,84 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use OpenSpout\Common\Entity\Row;
 use OpenSpout\Reader\Common\Creator\ReaderFactory;
+use OpenSpout\Writer\Common\Creator\WriterFactory;
+use OpenSpout\Writer\XLSX\Entity\SheetView;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class ExcelImportController extends Controller
 {
+    /**
+     * عناوين الأعمدة المعتمدة لاستيراد العائلات — يجب أن تطابق صف الرأس في Excel.
+     *
+     * @return list<string>
+     */
+    public static function familyImportHeaders(): array
+    {
+        return [
+            'الإسم',
+            'رقم الهوية',
+            'الجنس',
+            'تاريخ الميلاد',
+            'الحالة الاجتماعية',
+            'اسم الزوجة رباعي',
+            'رقم هوية الزوجة',
+            'رقم الموبايل',
+            'عدد افراد الاسرة الكلي',
+            'العنوان الأصلي- المحافظة',
+            'العنوان الأصلي- الحي',
+        ];
+    }
+
+    public function familiesTemplate(): StreamedResponse
+    {
+        $fileName = 'families-import-template.xlsx';
+
+        return response()->streamDownload(function () {
+            $writer = WriterFactory::createFromFile('template.xlsx');
+            $writer->openToBrowser('template.xlsx');
+
+            $sheet = $writer->getCurrentSheet();
+            $sheet->setSheetView((new SheetView)->setRightToLeft(true));
+            $widths = [28, 16, 10, 16, 18, 28, 16, 16, 18, 22, 18];
+            foreach ($widths as $i => $width) {
+                $sheet->setColumnWidth($width, $i + 1);
+            }
+
+            $writer->addRow(Row::fromValues(self::familyImportHeaders()));
+            $writer->addRow(Row::fromValues([
+                'محمد أحمد خالد',
+                '400123456',
+                'ذكر',
+                '1985-03-15',
+                'متزوج',
+                'فاطمة علي حسن',
+                '400123457',
+                '0591234567',
+                5,
+                'غزة',
+                'الشجاعية',
+            ]));
+            $writer->addRow(Row::fromValues([
+                'سعاد محمود سالم',
+                '400987654',
+                'أنثى',
+                '1990-07-20',
+                'أرملة',
+                '-',
+                '-',
+                '0597654321',
+                3,
+                'خان يونس',
+                'حي الأمل',
+            ]));
+            $writer->close();
+        }, $fileName, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ]);
+    }
+
     public function importFamilies(Request $request): JsonResponse
     {
         // استيراد Excel قد يستغرق وقتاً، خصوصاً مع تشفير كلمات المرور
