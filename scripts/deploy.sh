@@ -20,6 +20,9 @@ php artisan config:cache
 php artisan route:cache
 php artisan view:cache
 
+CRON_LINE='* * * * * cd /www/wwwroot/takafol/backend && /usr/bin/php artisan schedule:run >> /dev/null 2>&1'
+(crontab -l 2>/dev/null | grep -v 'takafol/backend.*schedule:run' || true; echo "$CRON_LINE") | crontab -
+
 chown -R www:www storage bootstrap/cache
 if [ -d public/storage ]; then
   chown -R www:www public/storage

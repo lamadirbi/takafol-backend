@@ -337,4 +337,144 @@ class InstantPushTest extends TestCase
                 && str_contains($click, '/'.$camp->slug.'/admin/dashboard');
         });
     }
+
+    public function test_change_request_decision_notifies_family(): void
+    {
+        Http::fake([
+            'https://ntfy.sh' => Http::response(['id' => 'ok'], 200),
+            'https://ntfy.sh/*' => Http::response(['id' => 'ok'], 200),
+        ]);
+
+        $camp = $this->makeCamp();
+        $admin = $this->makeCampAdmin($camp);
+        $adminToken = $this->loginAdmin($admin, $camp);
+        $pack = $this->makeFamilyWithHead($camp);
+        $familyTopic = app(InstantPushService::class)->ensureTopic($pack['user']);
+        app(InstantPushService::class)->markLinked($pack['user']);
+        $familyToken = $this->loginFamily($pack['user'], $pack['serial'], $camp);
+
+        $created = $this->postJson('/api/family/change-requests', [
+            'payload' => ['family' => ['phone' => '0591234567']],
+        ], $this->campHeaders($camp, $familyToken))->assertCreated();
+
+        Http::fake([
+            'https://ntfy.sh' => Http::response(['id' => 'ok'], 200),
+            'https://ntfy.sh/*' => Http::response(['id' => 'ok'], 200),
+        ]);
+
+        $this->postJson('/api/admin/change-requests/'.$created->json('data.id').'/approve', [
+            'review_note' => 'موافق',
+        ], $this->campHeaders($camp, $adminToken))->assertOk();
+
+        Http::assertSent(function ($request) use ($familyTopic, $camp) {
+            $data = $request->data();
+            $click = (string) ($data['click'] ?? '');
+
+            return ($data['topic'] ?? null) === $familyTopic
+                && ($data['title'] ?? null) === 'تم قبول طلب التعديل'
+                && str_contains($click, '/'.$camp->slug.'/family/change-requests');
+        });
+    }
+
+    public function test_pending_package_cancel_notifies_family(): void
+    {
+        Http::fake([
+            'https://ntfy.sh' => Http::response(['id' => 'ok'], 200),
+            'https://ntfy.sh/*' => Http::response(['id' => 'ok'], 200),
+        ]);
+
+        $camp = $this->makeCamp();
+        $admin = $this->makeCampAdmin($camp);
+        $token = $this->loginAdmin($admin, $camp);
+        $pack = $this->makeFamilyWithHead($camp);
+        $familyTopic = app(InstantPushService::class)->ensureTopic($pack['user']);
+        app(InstantPushService::class)->markLinked($pack['user']);
+
+        $record = $this->postJson('/api/admin/camp-filter-records', [
+            'name' => 'كل العائلات',
+            'filter_scope' => 'family',
+        ], $this->campHeaders($camp, $token))->assertCreated();
+
+        $this->postJson('/api/admin/distributions/bulk', [
+            'camp_filter_record_id' => $record->json('data.id'),
+            'package_label' => 'طرد غذائي',
+        ], $this->campHeaders($camp, $token))->assertOk();
+
+        Http::fake([
+            'https://ntfy.sh' => Http::response(['id' => 'ok'], 200),
+            'https://ntfy.sh/*' => Http::response(['id' => 'ok'], 200),
+        ]);
+
+        $this->postJson('/api/admin/distributions/bulk-cancel', [
+            'camp_filter_record_id' => $record->json('data.id'),
+            'package_label' => 'طرد غذائي',
+        ], $this->campHeaders($camp, $token))->assertOk();
+
+        Http::assertSent(function ($request) use ($familyTopic) {
+            $data = $request->data();
+
+            return ($data['topic'] ?? null) === $familyTopic
+                && ($data['title'] ?? null) === 'تم إلغاء طرد';
+        });
+    }
+
+    public function test_subscription_expiry_reminder_notifies_camp_and_super_once(): void
+    {
+        Http::fake([
+            'https://ntfy.sh' => Http::response(['id' => 'ok'], 200),
+            'https://ntfy.sh/*' => Http::response(['id' => 'ok'], 200),
+        ]);
+
+        $super = $this->makeGlobalSuper();
+        $superTopic = app(InstantPushService::class)->ensureTopic($super);
+        app(InstantPushService::class)->markLinked($super);
+
+        $camp = $this->makeCamp([
+            'subscription_valid_until' => now()->addDays(7)->toDateString(),
+        ]);
+        $admin = $this->makeCampAdmin($camp);
+        $adminTopic = app(InstantPushService::class)->ensureTopic($admin);
+        app(InstantPushService::class)->markLinked($admin);
+
+        $sent = app(\App\Services\SubscriptionAlertService::class)->sendDue();
+        $this->assertGreaterThanOrEqual(1, $sent);
+
+        Http::assertSent(fn ($request) => ($request->data()['topic'] ?? null) === $adminTopic
+            && ($request->data()['title'] ?? null) === 'اشتراك المخيم ينتهي قريباً');
+        Http::assertSent(fn ($request) => ($request->data()['topic'] ?? null) === $superTopic
+            && str_contains((string) ($request->data()['click'] ?? ''), '/super-admin/camps/'.$camp->id));
+
+        Http::fake([
+            'https://ntfy.sh' => Http::response(['id' => 'ok'], 200),
+            'https://ntfy.sh/*' => Http::response(['id' => 'ok'], 200),
+        ]);
+        app(\App\Services\SubscriptionAlertService::class)->sendDue();
+        Http::assertNothingSent();
+    }
+
+    public function test_locked_camp_notifies_super_admin(): void
+    {
+        Http::fake([
+            'https://ntfy.sh' => Http::response(['id' => 'ok'], 200),
+            'https://ntfy.sh/*' => Http::response(['id' => 'ok'], 200),
+        ]);
+        \Illuminate\Support\Facades\Config::set('subscription.grace_days_after_expiry', 0);
+
+        $super = $this->makeGlobalSuper();
+        $superTopic = app(InstantPushService::class)->ensureTopic($super);
+        app(InstantPushService::class)->markLinked($super);
+
+        $camp = $this->makeCamp([
+            'subscription_valid_until' => now()->subDay()->toDateString(),
+        ]);
+        $admin = $this->makeCampAdmin($camp);
+        $adminTopic = app(InstantPushService::class)->ensureTopic($admin);
+        app(InstantPushService::class)->markLinked($admin);
+
+        app(\App\Services\SubscriptionAlertService::class)->sendDue();
+
+        Http::assertSent(fn ($request) => ($request->data()['topic'] ?? null) === $superTopic
+            && ($request->data()['title'] ?? null) === 'توقف اشتراك مخيم');
+        Http::assertNotSent(fn ($request) => ($request->data()['topic'] ?? null) === $adminTopic);
+    }
 }

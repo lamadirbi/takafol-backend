@@ -2,10 +2,18 @@
 
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Schedule;
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
+
+Schedule::command('takafol:subscription-alerts')->dailyAt('05:00');
+
+Artisan::command('takafol:subscription-alerts', function () {
+    $sent = app(\App\Services\SubscriptionAlertService::class)->sendDue();
+    $this->info('subscription alerts sent: '.$sent);
+})->purpose('Send ntfy alerts for subscription expiry, grace, and lock');
 
 Artisan::command('push:vapid {--write : Write keys into .env when missing}', function () {
     $envPath = base_path('.env');

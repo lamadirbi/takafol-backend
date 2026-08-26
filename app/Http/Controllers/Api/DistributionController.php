@@ -74,11 +74,22 @@ class DistributionController extends Controller
         $packageLabel = trim((string) $validated['package_label']);
         $familyId = (int) $validated['family_id'];
 
+        $hadPending = Distribution::query()
+            ->where('camp_filter_record_id', $record->id)
+            ->where('family_id', $familyId)
+            ->where('package_label', $packageLabel)
+            ->where('status', Distribution::STATUS_PENDING)
+            ->exists();
+
         $deleted = (int) Distribution::query()
             ->where('camp_filter_record_id', $record->id)
             ->where('family_id', $familyId)
             ->where('package_label', $packageLabel)
             ->delete();
+
+        if ($deleted > 0 && $hadPending) {
+            $this->notifyPendingPackagesCancelled([$familyId], $packageLabel);
+        }
 
         return response()->json([
             'deleted' => $deleted,
@@ -288,7 +299,16 @@ class DistributionController extends Controller
             $q->whereNull('package_type_id')->where('package_label', trim((string) $validated['package_label']));
         }
 
+        $familyIds = $q->pluck('family_id')->all();
+        $label = trim((string) ($validated['package_label'] ?? ''));
+        if ($label === '' && $request->filled('package_type_id')) {
+            $label = trim((string) (PackageType::query()->find((int) $validated['package_type_id'])?->name ?? ''));
+        }
+
         $deleted = (int) $q->delete();
+        if ($deleted > 0) {
+            $this->notifyPendingPackagesCancelled($familyIds, $label);
+        }
 
         return response()->json([
             'deleted' => $deleted,
@@ -341,6 +361,12 @@ class DistributionController extends Controller
         $record = CampFilterRecord::query()->findOrFail($validated['camp_filter_record_id']);
 
         $packageLabel = trim((string) $validated['package_label']);
+        $pendingFamilyIds = Distribution::query()
+            ->where('camp_filter_record_id', $record->id)
+            ->where('package_label', $packageLabel)
+            ->where('status', Distribution::STATUS_PENDING)
+            ->pluck('family_id')
+            ->all();
 
         $deleted = 0;
 
@@ -368,6 +394,10 @@ class DistributionController extends Controller
             $record->update(['snapshot' => $snapshot]);
         });
 
+        if ($deleted > 0) {
+            $this->notifyPendingPackagesCancelled($pendingFamilyIds, $packageLabel);
+        }
+
         return response()->json([
             'deleted' => $deleted,
             'camp_filter_record_id' => $record->id,
@@ -394,5 +424,41 @@ class DistributionController extends Controller
         $distribution->load(['packageType', 'administeredBy']);
 
         return new DistributionResource($distribution);
+    }
+
+    /**
+     * @param  iterable<int, mixed>  $familyIds
+     */
+    private function notifyPendingPackagesCancelled(iterable $familyIds, string $packageLabel): void
+    {
+        $ids = collect($familyIds)->filter()->unique()->values()->all();
+        if ($ids === []) {
+            return;
+        }
+
+        $userIds = Family::query()
+            ->whereIn('id', $ids)
+            ->pluck('user_id')
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+        if ($userIds === []) {
+            return;
+        }
+
+        $body = $packageLabel !== ''
+            ? 'تم إلغاء طرد كان بانتظارك: '.$packageLabel
+            : 'تم إلغاء طرد كان بانتظار الاستلام.';
+        $this->webPush->notifyFamilyHeadsByUserIds(
+            $userIds,
+            'تم إلغاء طرد',
+            $body,
+            '/family/notifications',
+            [
+                'type' => 'distribution_cancelled',
+                'package_label' => $packageLabel,
+            ]
+        );
     }
 }

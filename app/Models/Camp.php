@@ -34,12 +34,14 @@ class Camp extends Model
         'landing_page_data',
         'primary_admin_user_id',
         'subscription_valid_until',
+        'subscription_alerts_sent',
         'payment_notification_whatsapp',
         'subscription_notice_image_path',
     ];
 
     protected $casts = [
         'landing_page_data' => 'array',
+        'subscription_alerts_sent' => 'array',
         'is_active' => 'boolean',
         'subscription_valid_until' => 'date',
     ];

@@ -66,6 +66,30 @@ class ChangeRequestController extends Controller
         ]);
     }
 
+    private function notifyFamilyOfReview(ChangeRequest $changeRequest, bool $approved): void
+    {
+        $family = Family::query()->find($changeRequest->family_id);
+        $userId = (int) ($family?->user_id ?? 0);
+        if ($userId < 1) {
+            return;
+        }
+
+        $title = $approved ? 'تم قبول طلب التعديل' : 'تم رفض طلب التعديل';
+        $body = $approved
+            ? 'إدارة المخيم وافقت على تعديل بيانات عائلتك.'
+            : 'إدارة المخيم رفضت طلب تعديل بيانات عائلتك.';
+        $this->webPush->notifyFamilyHeadsByUserIds(
+            [$userId],
+            $title,
+            $body,
+            '/family/change-requests',
+            [
+                'type' => 'change_request_review',
+                'change_request_id' => $changeRequest->id,
+            ]
+        );
+    }
+
     /**
      * قائمة طلبات العائلة الحالية (لرب الأسرة).
      */
@@ -262,7 +286,10 @@ class ChangeRequestController extends Controller
             ]);
         });
 
-        return (new ChangeRequestResource($changeRequest->fresh()))->response();
+        $fresh = $changeRequest->fresh();
+        $this->notifyFamilyOfReview($fresh, true);
+
+        return (new ChangeRequestResource($fresh))->response();
     }
 
     public function adminReject(Request $request, ChangeRequest $changeRequest): JsonResponse
@@ -279,6 +306,9 @@ class ChangeRequestController extends Controller
             'reviewed_at' => now(),
         ]);
 
-        return (new ChangeRequestResource($changeRequest->fresh()))->response();
+        $fresh = $changeRequest->fresh();
+        $this->notifyFamilyOfReview($fresh, false);
+
+        return (new ChangeRequestResource($fresh))->response();
     }
 }

@@ -203,6 +203,9 @@ class InstantPushService
                 $rel = '/super-admin/requests';
             } elseif ($type === 'subscription_renewal') {
                 $rel = '/super-admin/renewals';
+            } elseif (in_array($type, ['subscription_expiring', 'subscription_grace', 'subscription_locked'], true)) {
+                $campId = (int) ($data['camp_id'] ?? 0);
+                $rel = $campId > 0 ? '/super-admin/camps/'.$campId : '/super-admin/camps';
             } elseif (! str_starts_with(ltrim($rel, '/'), 'super-admin')) {
                 $rel = '/super-admin';
             }
@@ -215,9 +218,13 @@ class InstantPushService
             $rel = '/'.$slug.'/news'.($id ? '#post-'.$id : '');
         } elseif ($type === 'distribution_pending' && $slug !== '') {
             $rel = '/'.$slug.'/family/notifications';
+        } elseif ($type === 'distribution_cancelled' && $slug !== '') {
+            $rel = '/'.$slug.'/family/notifications';
         } elseif ($type === 'change_request' && $slug !== '') {
             $rel = '/'.$slug.'/admin/change-requests';
-        } elseif ($type === 'subscription_renewal_result' && $slug !== '') {
+        } elseif ($type === 'change_request_review' && $slug !== '') {
+            $rel = '/'.$slug.'/family/change-requests';
+        } elseif (in_array($type, ['subscription_expiring', 'subscription_renewal_result'], true) && $slug !== '') {
             $rel = '/'.$slug.'/admin/dashboard';
         } elseif ($slug !== '') {
             $mapped = [
@@ -225,6 +232,7 @@ class InstantPushService
                 '/dashboard' => '/'.$slug.'/family/notifications',
                 '/family/dashboard' => '/'.$slug.'/family/dashboard',
                 '/family/notifications' => '/'.$slug.'/family/notifications',
+                '/family/change-requests' => '/'.$slug.'/family/change-requests',
                 '/admin/change-requests' => '/'.$slug.'/admin/change-requests',
                 '/admin/dashboard' => '/'.$slug.'/admin/dashboard',
             ];
