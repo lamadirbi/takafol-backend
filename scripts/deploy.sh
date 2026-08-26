@@ -14,6 +14,7 @@ composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist
 
 php artisan migrate --force
 php artisan db:seed --class=ProductionSeeder --force
+php artisan push:vapid --write
 php artisan storage:link --force || true
 php artisan config:cache
 php artisan route:cache

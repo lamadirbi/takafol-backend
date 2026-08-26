@@ -20,7 +20,8 @@ class PushController extends Controller
     public function publicKey(): JsonResponse
     {
         return response()->json([
-            'public_key' => (string) env('VAPID_PUBLIC_KEY', ''),
+            'public_key' => $this->webPush->vapidPublicKey(),
+            'enabled' => $this->webPush->isConfigured(),
         ]);
     }
 
@@ -45,20 +46,35 @@ class PushController extends Controller
             $user->camp?->slug,
             $user
         );
-        $ok = $this->instantPush->publish(
+
+        $ntfyOk = $this->instantPush->publish(
             $channel['topic'],
             'تَكافل',
             'هذا إشعار تجريبي. اضغط عليه لفتح الموقع.',
             $click
         );
 
+        $this->webPush->deliverToUserIds(
+            [(int) $user->id],
+            'تَكافل',
+            'هذا إشعار تجريبي. اضغط عليه لفتح الموقع.',
+            $click,
+            ['type' => 'push_test'],
+            false,
+        );
+
+        $hasBrowser = $user->pushSubscriptions()->exists();
+        $sent = $ntfyOk || $hasBrowser;
+
         return response()->json([
             ...$channel,
-            'sent' => $ok,
-            'message' => $ok
-                ? 'تم إرسال إشعار تجريبي. راجعي تطبيق ntfy.'
-                : 'تعذر إرسال الإشعار التجريبي. تأكد من الاتصال ثم أعد المحاولة.',
-        ], $ok ? 200 : 502);
+            'sent' => $sent,
+            'browser' => $hasBrowser,
+            'ntfy' => $ntfyOk,
+            'message' => $sent
+                ? 'تم إرسال إشعار تجريبي. يفترض يطلع على هذا الجهاز إذا الإشعارات مفعّلة.'
+                : 'تعذر إرسال الإشعار التجريبي. فعّلي الإشعارات من الزر أعلاه ثم أعيدي المحاولة.',
+        ], $sent ? 200 : 502);
     }
 
     public function subscribe(Request $request): JsonResponse

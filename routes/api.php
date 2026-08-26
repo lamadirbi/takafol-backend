@@ -37,6 +37,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
     Route::post('/logout', [AuthController::class, 'logout']);
 
+    Route::post('/push/subscribe', [PushController::class, 'subscribe']);
     Route::post('/push/unsubscribe', [PushController::class, 'unsubscribe']);
     Route::get('/push/instant-channel', [PushController::class, 'instantChannel']);
     Route::post('/push/instant-channel/test', [PushController::class, 'instantTest']);
@@ -52,7 +53,6 @@ Route::middleware(['auth:sanctum'])->group(function () {
     });
 
     Route::middleware(['family_subscription', 'family_no_grace'])->group(function () {
-        Route::post('/push/subscribe', [PushController::class, 'subscribe']);
         Route::post('/announcements/{announcement}/reactions/toggle', [AnnouncementReactionController::class, 'toggle']);
         Route::post('/announcements/{announcement}/comments', [CommentController::class, 'store']);
     });

@@ -93,4 +93,55 @@ class InstantPushTest extends TestCase
 
         Http::assertSent(fn ($request) => ($request->data()['topic'] ?? null) === $topic);
     }
+
+    public function test_public_key_reports_enabled_flag(): void
+    {
+        $this->getJson('/api/push/public-key')
+            ->assertOk()
+            ->assertJsonStructure(['public_key', 'enabled']);
+    }
+
+    public function test_family_can_subscribe_web_push(): void
+    {
+        $camp = $this->makeCamp();
+        ['user' => $user, 'serial' => $serial] = $this->makeFamilyWithHead($camp);
+        $token = $this->loginFamily($user, $serial, $camp);
+
+        $this->postJson('/api/push/subscribe', [
+            'endpoint' => 'https://fcm.googleapis.com/fcm/send/family-test',
+            'keys' => [
+                'p256dh' => 'family-public-key',
+                'auth' => 'family-auth-token',
+            ],
+        ], $this->campHeaders($camp, $token))
+            ->assertOk()
+            ->assertJsonPath('ok', true);
+
+        $this->assertDatabaseHas('push_subscriptions', [
+            'user_id' => $user->id,
+            'public_key' => 'family-public-key',
+        ]);
+    }
+
+    public function test_camp_admin_can_subscribe_web_push(): void
+    {
+        $camp = $this->makeCamp();
+        $admin = $this->makeCampAdmin($camp);
+        $token = $this->loginAdmin($admin, $camp);
+
+        $this->postJson('/api/push/subscribe', [
+            'endpoint' => 'https://fcm.googleapis.com/fcm/send/admin-test',
+            'keys' => [
+                'p256dh' => 'admin-public-key',
+                'auth' => 'admin-auth-token',
+            ],
+        ], $this->campHeaders($camp, $token))
+            ->assertOk()
+            ->assertJsonPath('ok', true);
+
+        $this->assertDatabaseHas('push_subscriptions', [
+            'user_id' => $admin->id,
+            'public_key' => 'admin-public-key',
+        ]);
+    }
 }

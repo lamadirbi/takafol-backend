@@ -2,26 +2,36 @@
 
 namespace App\Services;
 
-use App\Jobs\SendWebPushToRole;
-use App\Jobs\SendWebPushToUsers;
 use App\Models\PushSubscription;
 use App\Models\User;
-use Illuminate\Support\Facades\App;
 use Minishlink\WebPush\Subscription;
 use Minishlink\WebPush\WebPush;
 
 class WebPushService
 {
+    public function vapidPublicKey(): string
+    {
+        return trim((string) config('webpush.vapid_public', ''));
+    }
+
+    public function isConfigured(): bool
+    {
+        return $this->vapidPublicKey() !== '' && trim((string) config('webpush.vapid_private', '')) !== '';
+    }
+
     private function makeWebPush(): ?WebPush
     {
-        $publicKey = trim((string) env('VAPID_PUBLIC_KEY', ''));
-        $privateKey = trim((string) env('VAPID_PRIVATE_KEY', ''));
+        $publicKey = $this->vapidPublicKey();
+        $privateKey = trim((string) config('webpush.vapid_private', ''));
         if ($publicKey === '' || $privateKey === '') {
             return null;
         }
 
         try {
-            $subject = config('app.url') ?: (string) env('VAPID_SUBJECT', 'mailto:admin@example.com');
+            $subject = trim((string) config('webpush.vapid_subject', '')) ?: (string) config('app.url');
+            if ($subject === '') {
+                $subject = 'mailto:admin@example.com';
+            }
 
             return new WebPush([
                 'VAPID' => [
@@ -105,15 +115,7 @@ class WebPushService
         }
 
         $this->sendInstant($ids, $title, $body, $url, $data);
-
-        SendWebPushToUsers::dispatch(
-            $ids,
-            $title,
-            $body,
-            $url,
-            $data,
-            $this->currentCampId(),
-        )->afterResponse();
+        $this->deliverToUserIds($ids, $title, $body, $url, $data, false);
     }
 
     /**
@@ -160,20 +162,24 @@ class WebPushService
             $this->sendInstant($userIds, $title, $body, $url, $data);
         }
 
-        $webPush = $this->makeWebPush();
-        if (! $webPush) {
-            return;
+        try {
+            $webPush = $this->makeWebPush();
+            if (! $webPush) {
+                return;
+            }
+
+            PushSubscription::query()
+                ->whereIn('user_id', $userIds)
+                ->chunkById(200, function ($subs) use ($webPush, $title, $body, $url, $data) {
+                    foreach ($subs as $sub) {
+                        $this->queueNotification($webPush, $sub, $title, $body, $url, $data);
+                    }
+                });
+
+            $this->flushAndCleanup($webPush, $userIds);
+        } catch (\Throwable) {
+            // لا نكسر العملية الأساسية بسبب إعداد Push غير مكتمل.
         }
-
-        PushSubscription::query()
-            ->whereIn('user_id', $userIds)
-            ->chunkById(200, function ($subs) use ($webPush, $title, $body, $url, $data) {
-                foreach ($subs as $sub) {
-                    $this->queueNotification($webPush, $sub, $title, $body, $url, $data);
-                }
-            });
-
-        $this->flushAndCleanup($webPush, $userIds);
     }
 
     /**
@@ -183,20 +189,7 @@ class WebPushService
     {
         $roleIds = User::query()->where('role', $role)->pluck('id')->map(fn ($id) => (int) $id)->all();
         $this->sendInstant($roleIds, $title, $body, $url, $data);
-
-        SendWebPushToRole::dispatch(
-            $role,
-            $title,
-            $body,
-            $url,
-            $data,
-            $this->currentCampId(),
-        )->afterResponse();
-    }
-
-    private function currentCampId(): ?int
-    {
-        return App::has('current_camp_id') ? (int) App::get('current_camp_id') : null;
+        $this->notifyRole($role, $title, $body, $url, $data, false);
     }
 
     /**
@@ -217,10 +210,11 @@ class WebPushService
      */
     private function queueNotification(WebPush $webPush, PushSubscription $sub, string $title, string $body, ?string $url, array $data): void
     {
+        $click = app(InstantPushService::class)->destinationUrl($url, $data) ?: $url;
         $payload = [
             'title' => $title,
             'body' => $body,
-            'url' => $url,
+            'url' => $click,
             'data' => $data,
         ];
 
