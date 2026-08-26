@@ -66,7 +66,7 @@ class TenantMiddleware
             return true;
         }
 
-        if (str_ends_with($host, '.sslip.io') || str_ends_with($host, '.nip.io')) {
+        if (str_ends_with($host, '.sslip.io') || str_ends_with($host, '.nip.io') || str_ends_with($host, '.duckdns.org')) {
             return true;
         }
 
@@ -79,6 +79,6 @@ class TenantMiddleware
 
         return $slug === ''
             || ctype_digit($slug)
-            || in_array($slug, ['www', 'localhost', 'api', 'admin', 'super-admin', 'takafol'], true);
+            || in_array($slug, ['www', 'localhost', 'api', 'admin', 'super-admin', 'takafol', 'takaful'], true);
     }
 }
