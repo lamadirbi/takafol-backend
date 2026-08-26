@@ -57,32 +57,6 @@ class ExcelImportController extends Controller
             }
 
             $writer->addRow(Row::fromValues(self::familyImportHeaders()));
-            $writer->addRow(Row::fromValues([
-                'محمد أحمد خالد',
-                '400123456',
-                'ذكر',
-                '1985-03-15',
-                'متزوج',
-                'فاطمة علي حسن',
-                '400123457',
-                '0591234567',
-                5,
-                'غزة',
-                'الشجاعية',
-            ]));
-            $writer->addRow(Row::fromValues([
-                'سعاد محمود سالم',
-                '400987654',
-                'أنثى',
-                '1990-07-20',
-                'أرملة',
-                '-',
-                '-',
-                '0597654321',
-                3,
-                'خان يونس',
-                'حي الأمل',
-            ]));
             $writer->close();
         }, $fileName, [
             'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
