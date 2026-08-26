@@ -107,7 +107,7 @@ class InstantPushService
             ->whereIn('id', $ids)
             ->whereNotNull('ntfy_topic')
             ->whereNotNull('ntfy_linked_at')
-            ->get(['id', 'ntfy_topic', 'camp_id', 'role']);
+            ->get(['id', 'ntfy_topic', 'camp_id', 'role', 'is_super']);
 
         foreach ($users as $user) {
             $topic = trim((string) $user->ntfy_topic);
@@ -196,6 +196,19 @@ class InstantPushService
 
         $type = (string) ($data['type'] ?? '');
         $rel = '/'.ltrim((string) ($path ?: ''), '/');
+        $isGlobalSuper = $user && $user->isSuper() && $user->camp_id === null;
+
+        if ($isGlobalSuper) {
+            if ($type === 'camp_registration') {
+                $rel = '/super-admin/requests';
+            } elseif ($type === 'subscription_renewal') {
+                $rel = '/super-admin/renewals';
+            } elseif (! str_starts_with(ltrim($rel, '/'), 'super-admin')) {
+                $rel = '/super-admin';
+            }
+
+            return $this->normalizeAbsoluteUrl($rel);
+        }
 
         if ($type === 'announcement' && $slug !== '') {
             $id = $data['announcement_id'] ?? null;
@@ -204,6 +217,8 @@ class InstantPushService
             $rel = '/'.$slug.'/family/notifications';
         } elseif ($type === 'change_request' && $slug !== '') {
             $rel = '/'.$slug.'/admin/change-requests';
+        } elseif ($type === 'subscription_renewal_result' && $slug !== '') {
+            $rel = '/'.$slug.'/admin/dashboard';
         } elseif ($slug !== '') {
             $mapped = [
                 '/news' => '/'.$slug.'/news',

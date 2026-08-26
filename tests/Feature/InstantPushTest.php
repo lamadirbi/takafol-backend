@@ -196,4 +196,145 @@ class InstantPushTest extends TestCase
             'public_key' => 'admin-public-key',
         ]);
     }
+
+    public function test_super_admin_can_link_ntfy_without_camp(): void
+    {
+        $super = $this->makeGlobalSuper();
+        $token = $this->loginSuper($super);
+
+        $this->postJson('/api/push/instant-channel/link', [], $this->superHeaders($token))
+            ->assertOk()
+            ->assertJsonPath('linked', true);
+
+        $this->assertNotNull($super->fresh()->ntfy_linked_at);
+    }
+
+    public function test_camp_registration_notifies_linked_super_admin(): void
+    {
+        Http::fake([
+            'https://ntfy.sh' => Http::response(['id' => 'ok'], 200),
+            'https://ntfy.sh/*' => Http::response(['id' => 'ok'], 200),
+        ]);
+
+        $super = $this->makeGlobalSuper();
+        $topic = app(InstantPushService::class)->ensureTopic($super);
+        app(InstantPushService::class)->markLinked($super);
+
+        $this->postJson('/api/camp-registration-requests', [
+            'applicant_name' => 'خالد',
+            'camp_name' => 'مخيم النور',
+            'whatsapp_phone' => '0591112233',
+        ])->assertCreated();
+
+        Http::assertSent(function ($request) use ($topic) {
+            $data = $request->data();
+            $click = (string) ($data['click'] ?? '');
+
+            return ($data['topic'] ?? null) === $topic
+                && ($data['title'] ?? null) === 'طلب تسجيل مخيم جديد'
+                && str_contains($click, '/super-admin/requests');
+        });
+    }
+
+    public function test_renewal_request_notifies_linked_super_admin(): void
+    {
+        Http::fake([
+            'https://ntfy.sh' => Http::response(['id' => 'ok'], 200),
+            'https://ntfy.sh/*' => Http::response(['id' => 'ok'], 200),
+        ]);
+        \Illuminate\Support\Facades\Storage::fake('public');
+
+        $super = $this->makeGlobalSuper();
+        $topic = app(InstantPushService::class)->ensureTopic($super);
+        app(InstantPushService::class)->markLinked($super);
+
+        $camp = $this->makeCamp();
+        $admin = $this->makeCampAdmin($camp);
+        $token = $this->loginAdmin($admin, $camp);
+
+        $this->post('/api/admin/camp/subscription-renewal-requests', [
+            'image' => $this->fakeJpeg(),
+        ], $this->campHeaders($camp, $token))->assertCreated();
+
+        Http::assertSent(function ($request) use ($topic) {
+            $data = $request->data();
+            $click = (string) ($data['click'] ?? '');
+
+            return ($data['topic'] ?? null) === $topic
+                && ($data['title'] ?? null) === 'طلب تجديد اشتراك'
+                && str_contains($click, '/super-admin/renewals');
+        });
+    }
+
+    public function test_family_change_request_notifies_camp_admin_only(): void
+    {
+        Http::fake([
+            'https://ntfy.sh' => Http::response(['id' => 'ok'], 200),
+            'https://ntfy.sh/*' => Http::response(['id' => 'ok'], 200),
+        ]);
+
+        $camp = $this->makeCamp();
+        $other = $this->makeCamp();
+        $admin = $this->makeCampAdmin($camp);
+        $otherAdmin = $this->makeCampAdmin($other);
+        $adminTopic = app(InstantPushService::class)->ensureTopic($admin);
+        $otherTopic = app(InstantPushService::class)->ensureTopic($otherAdmin);
+        app(InstantPushService::class)->markLinked($admin);
+        app(InstantPushService::class)->markLinked($otherAdmin);
+
+        $pack = $this->makeFamilyWithHead($camp);
+        $familyToken = $this->loginFamily($pack['user'], $pack['serial'], $camp);
+
+        $this->postJson('/api/family/change-requests', [
+            'payload' => [
+                'family' => ['phone' => '0591234567'],
+            ],
+        ], $this->campHeaders($camp, $familyToken))->assertCreated();
+
+        Http::assertSent(fn ($request) => ($request->data()['topic'] ?? null) === $adminTopic
+            && ($request->data()['title'] ?? null) === 'طلب تعديل بيانات جديد');
+        Http::assertNotSent(fn ($request) => ($request->data()['topic'] ?? null) === $otherTopic);
+    }
+
+    public function test_renewal_decision_notifies_camp_admin(): void
+    {
+        Http::fake([
+            'https://ntfy.sh' => Http::response(['id' => 'ok'], 200),
+            'https://ntfy.sh/*' => Http::response(['id' => 'ok'], 200),
+        ]);
+        \Illuminate\Support\Facades\Storage::fake('public');
+
+        $super = $this->makeGlobalSuper();
+        $superToken = $this->loginSuper($super);
+        $camp = $this->makeCamp();
+        $admin = $this->makeCampAdmin($camp);
+        $adminToken = $this->loginAdmin($admin, $camp);
+        $topic = app(InstantPushService::class)->ensureTopic($admin);
+        app(InstantPushService::class)->markLinked($admin);
+
+        $this->post('/api/admin/camp/subscription-renewal-requests', [
+            'image' => $this->fakeJpeg(),
+        ], $this->campHeaders($camp, $adminToken))->assertCreated();
+
+        $pending = $this->getJson('/api/admin/subscription-renewal-requests', $this->superHeaders($superToken))->assertOk();
+        $renewalId = $pending->json('data.0.id');
+
+        Http::fake([
+            'https://ntfy.sh' => Http::response(['id' => 'ok'], 200),
+            'https://ntfy.sh/*' => Http::response(['id' => 'ok'], 200),
+        ]);
+
+        $this->patchJson('/api/admin/subscription-renewal-requests/'.$renewalId, [
+            'status' => 'approved',
+        ], $this->superHeaders($superToken))->assertOk();
+
+        Http::assertSent(function ($request) use ($topic, $camp) {
+            $data = $request->data();
+            $click = (string) ($data['click'] ?? '');
+
+            return ($data['topic'] ?? null) === $topic
+                && ($data['title'] ?? null) === 'تم قبول تجديد الاشتراك'
+                && str_contains($click, '/'.$camp->slug.'/admin/dashboard');
+        });
+    }
 }

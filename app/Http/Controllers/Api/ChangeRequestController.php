@@ -59,7 +59,7 @@ class ChangeRequestController extends Controller
         $body = $isUpdate
             ? "{$head} — طلب #{$changeRequest->id} (محدّث)"
             : "{$head} — طلب #{$changeRequest->id} بانتظار المراجعة";
-        $this->webPush->notifyAllAdminsAfterResponse($title, $body, '/admin/change-requests', [
+        $this->webPush->notifyCampAdmins((int) $family->camp_id, $title, $body, '/admin/change-requests', [
             'type' => 'change_request',
             'change_request_id' => $changeRequest->id,
             'family_id' => $family->id,

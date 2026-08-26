@@ -88,6 +88,45 @@ class WebPushService
     }
 
     /**
+     * إشعار الإدارة العليا للمنصة (بدون مخيم).
+     *
+     * @param  array<string, mixed>  $data
+     */
+    public function notifyGlobalSuperAdmins(string $title, string $body, ?string $url = null, array $data = []): void
+    {
+        $ids = User::withoutGlobalScopes()
+            ->where('role', User::ROLE_ADMIN)
+            ->where('is_super', true)
+            ->whereNull('camp_id')
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $this->deliverToUserIds($ids, $title, $body, $url, $data);
+    }
+
+    /**
+     * إشعار مسؤولي مخيم محدد فقط.
+     *
+     * @param  array<string, mixed>  $data
+     */
+    public function notifyCampAdmins(int $campId, string $title, string $body, ?string $url = null, array $data = []): void
+    {
+        if ($campId < 1) {
+            return;
+        }
+
+        $ids = User::withoutGlobalScopes()
+            ->where('role', User::ROLE_ADMIN)
+            ->where('camp_id', $campId)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $this->deliverToUserIds($ids, $title, $body, $url, $data);
+    }
+
+    /**
      * @param  array<string, mixed>  $data
      */
     public function notifyAllAdminsAfterResponse(string $title, string $body, ?string $url = null, array $data = []): void

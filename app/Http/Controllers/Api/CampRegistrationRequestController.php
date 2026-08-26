@@ -4,12 +4,14 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\CampRegistrationRequest;
+use App\Services\WebPushService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
 class CampRegistrationRequestController extends Controller
 {
+    public function __construct(private readonly WebPushService $webPush) {}
     /**
      * طلب تسجيل مخيم جديد (عام — بدون تسجيل دخول).
      */
@@ -33,6 +35,16 @@ class CampRegistrationRequestController extends Controller
             'message' => isset($validated['message']) ? trim((string) $validated['message']) : null,
             'status' => CampRegistrationRequest::STATUS_PENDING,
         ]);
+
+        $this->webPush->notifyGlobalSuperAdmins(
+            'طلب تسجيل مخيم جديد',
+            $row->camp_name.' — مقدّم الطلب: '.$row->applicant_name,
+            '/super-admin/requests',
+            [
+                'type' => 'camp_registration',
+                'camp_registration_request_id' => $row->id,
+            ]
+        );
 
         return response()->json([
             'id' => $row->id,

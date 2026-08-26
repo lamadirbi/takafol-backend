@@ -5,12 +5,14 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Camp;
 use App\Models\SubscriptionRenewalRequest;
+use App\Services\WebPushService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\App;
 
 class SubscriptionRenewalRequestController extends Controller
 {
+    public function __construct(private readonly WebPushService $webPush) {}
     /**
      * سجل طلبات التجديد للمخيم الحالي (أدمن مخيم).
      */
@@ -83,6 +85,17 @@ class SubscriptionRenewalRequestController extends Controller
             'status' => SubscriptionRenewalRequest::STATUS_PENDING,
         ]);
 
+        $this->webPush->notifyGlobalSuperAdmins(
+            'طلب تجديد اشتراك',
+            $camp->name.' أرسل إشعار دفع بانتظار المراجعة.',
+            '/super-admin/renewals',
+            [
+                'type' => 'subscription_renewal',
+                'subscription_renewal_request_id' => $row->id,
+                'camp_id' => $campId,
+            ]
+        );
+
         return response()->json([
             ...$this->serializeRow($row),
             'message' => 'تم إرسال طلب تجديد الاشتراك. سيقوم الأدمن بمراجعته قريباً.',
@@ -138,18 +151,34 @@ class SubscriptionRenewalRequestController extends Controller
             'admin_note' => isset($validated['admin_note']) ? trim((string) $validated['admin_note']) : null,
         ]);
 
-        if ($validated['status'] === SubscriptionRenewalRequest::STATUS_APPROVED) {
-            $camp = Camp::withoutGlobalScopes()->find($row->camp_id);
-            if ($camp) {
-                $renewalDays = (int) config('subscription.renewal_days', 30);
-                $today = now()->startOfDay();
-                $base = $camp->subscription_valid_until
-                    ? \Carbon\Carbon::parse($camp->subscription_valid_until)->startOfDay()
-                    : $today;
-                if ($base->lt($today)) $base = $today;
-                $camp->update(['subscription_valid_until' => $base->copy()->addDays($renewalDays)]);
+        $camp = Camp::withoutGlobalScopes()->find($row->camp_id);
+        $approved = $validated['status'] === SubscriptionRenewalRequest::STATUS_APPROVED;
+
+        if ($approved && $camp) {
+            $renewalDays = (int) config('subscription.renewal_days', 30);
+            $today = now()->startOfDay();
+            $base = $camp->subscription_valid_until
+                ? \Carbon\Carbon::parse($camp->subscription_valid_until)->startOfDay()
+                : $today;
+            if ($base->lt($today)) {
+                $base = $today;
             }
+            $camp->update(['subscription_valid_until' => $base->copy()->addDays($renewalDays)]);
         }
+
+        $this->webPush->notifyCampAdmins(
+            (int) $row->camp_id,
+            $approved ? 'تم قبول تجديد الاشتراك' : 'تم رفض تجديد الاشتراك',
+            $approved
+                ? 'تم تمديد اشتراك '.($camp?->name ?? 'المخيم').'.'
+                : 'طلب تجديد '.($camp?->name ?? 'المخيم').' رُفض.'.($row->admin_note ? ' '.$row->admin_note : ''),
+            '/admin/dashboard',
+            [
+                'type' => 'subscription_renewal_result',
+                'subscription_renewal_request_id' => $row->id,
+                'status' => $validated['status'],
+            ]
+        );
 
         return response()->json($this->serializeRow($row->fresh()));
     }

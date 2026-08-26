@@ -59,8 +59,14 @@ class PushController extends Controller
             ], 409);
         }
 
+        $clickPath = '/family/notifications';
+        if ($user->isSuper() && $user->camp_id === null) {
+            $clickPath = '/super-admin';
+        } elseif ($user->isAdmin()) {
+            $clickPath = '/admin/dashboard';
+        }
         $click = $this->instantPush->destinationUrl(
-            $user->isAdmin() ? '/admin/dashboard' : '/family/notifications',
+            $clickPath,
             [],
             $user->camp?->slug,
             $user
