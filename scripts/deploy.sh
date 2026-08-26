@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export COMPOSER_ALLOW_SUPERUSER=1
+export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
 
 ROOT=/www/wwwroot/takafol/backend
 cd "$ROOT"
