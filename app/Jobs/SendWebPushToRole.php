@@ -42,6 +42,6 @@ final class SendWebPushToRole implements ShouldQueue
             }
         }
 
-        $webPush->notifyRole($this->role, $this->title, $this->body, $this->url, $this->data);
+        $webPush->notifyRole($this->role, $this->title, $this->body, $this->url, $this->data, false);
     }
 }

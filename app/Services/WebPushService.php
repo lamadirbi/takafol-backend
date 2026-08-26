@@ -104,6 +104,8 @@ class WebPushService
             return;
         }
 
+        $this->sendInstant($ids, $title, $body, $url, $data);
+
         SendWebPushToUsers::dispatch(
             $ids,
             $title,
@@ -117,10 +119,12 @@ class WebPushService
     /**
      * @param  array<string, mixed>  $data
      */
-    public function notifyRole(string $role, string $title, string $body, ?string $url, array $data): void
+    public function notifyRole(string $role, string $title, string $body, ?string $url, array $data, bool $includeInstant = true): void
     {
         $roleIds = User::query()->where('role', $role)->pluck('id')->map(fn ($id) => (int) $id)->all();
-        $this->sendInstant($roleIds, $title, $body, $url, $data);
+        if ($includeInstant) {
+            $this->sendInstant($roleIds, $title, $body, $url, $data);
+        }
 
         try {
             $webPush = $this->makeWebPush();
@@ -150,9 +154,11 @@ class WebPushService
      * @param  list<int>  $userIds
      * @param  array<string, mixed>  $data
      */
-    public function deliverToUserIds(array $userIds, string $title, string $body, ?string $url, array $data): void
+    public function deliverToUserIds(array $userIds, string $title, string $body, ?string $url, array $data, bool $includeInstant = true): void
     {
-        $this->sendInstant($userIds, $title, $body, $url, $data);
+        if ($includeInstant) {
+            $this->sendInstant($userIds, $title, $body, $url, $data);
+        }
 
         $webPush = $this->makeWebPush();
         if (! $webPush) {
@@ -175,6 +181,9 @@ class WebPushService
      */
     private function dispatchRole(string $role, string $title, string $body, ?string $url, array $data): void
     {
+        $roleIds = User::query()->where('role', $role)->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $this->sendInstant($roleIds, $title, $body, $url, $data);
+
         SendWebPushToRole::dispatch(
             $role,
             $title,

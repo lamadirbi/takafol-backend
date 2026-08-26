@@ -43,6 +43,6 @@ final class SendWebPushToUsers implements ShouldQueue
             }
         }
 
-        $webPush->deliverToUserIds($this->userIds, $this->title, $this->body, $this->url, $this->data);
+        $webPush->deliverToUserIds($this->userIds, $this->title, $this->body, $this->url, $this->data, false);
     }
 }

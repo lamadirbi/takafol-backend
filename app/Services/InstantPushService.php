@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\User;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 /**
@@ -73,7 +74,7 @@ class InstantPushService
             return;
         }
 
-        $users = User::query()
+        $users = User::withoutGlobalScopes()
             ->with('camp:id,slug')
             ->whereIn('id', $ids)
             ->whereNotNull('ntfy_topic')
@@ -124,9 +125,22 @@ class InstantPushService
                 $request = $request->withToken($token);
             }
             $response = $request->post($this->baseUrl(), $payload);
+            if ($response->successful()) {
+                return true;
+            }
+            Log::warning('ntfy publish failed', [
+                'topic' => $topic,
+                'status' => $response->status(),
+                'body' => mb_substr($response->body(), 0, 300),
+            ]);
 
-            return $response->successful();
-        } catch (\Throwable) {
+            return false;
+        } catch (\Throwable $e) {
+            Log::warning('ntfy publish exception', [
+                'topic' => $topic,
+                'error' => $e->getMessage(),
+            ]);
+
             return false;
         }
     }

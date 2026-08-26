@@ -69,4 +69,28 @@ class InstantPushTest extends TestCase
                 && isset($data['actions'][0]['url']);
         });
     }
+
+    public function test_family_package_notify_hits_ntfy_without_waiting_for_queue(): void
+    {
+        Http::fake([
+            'https://ntfy.sh' => Http::response(['id' => 'ok'], 200),
+            'https://ntfy.sh/*' => Http::response(['id' => 'ok'], 200),
+        ]);
+        \Illuminate\Support\Facades\Queue::fake();
+
+        $camp = $this->makeCamp();
+        $this->setTenant($camp);
+        ['user' => $user] = $this->makeFamilyWithHead($camp);
+        $topic = app(InstantPushService::class)->ensureTopic($user);
+
+        app(WebPushService::class)->notifyFamilyHeadsByUserIds(
+            [$user->id],
+            'لديك إشعار جديد',
+            'طرد بانتظار الاستلام',
+            '/family/notifications',
+            ['type' => 'distribution_pending']
+        );
+
+        Http::assertSent(fn ($request) => ($request->data()['topic'] ?? null) === $topic);
+    }
 }
