@@ -35,11 +35,30 @@ class PushController extends Controller
         return response()->json($this->instantPush->channelFor($request->user()));
     }
 
+    public function instantLink(Request $request): JsonResponse
+    {
+        return response()->json($this->instantPush->markLinked($request->user()));
+    }
+
+    public function instantUnlink(Request $request): JsonResponse
+    {
+        return response()->json($this->instantPush->unlink($request->user()));
+    }
+
     public function instantTest(Request $request): JsonResponse
     {
         $user = $request->user();
         $user->loadMissing('camp:id,slug');
         $channel = $this->instantPush->channelFor($user);
+        if (! $channel['linked']) {
+            return response()->json([
+                ...$channel,
+                'sent' => false,
+                'ntfy' => false,
+                'message' => 'اربطي تطبيق ntfy أولاً حتى يوصل الإشعار على التطبيق المثبّت.',
+            ], 409);
+        }
+
         $click = $this->instantPush->destinationUrl(
             $user->isAdmin() ? '/admin/dashboard' : '/family/notifications',
             [],
@@ -47,34 +66,21 @@ class PushController extends Controller
             $user
         );
 
-        $ntfyOk = $this->instantPush->publish(
+        $ok = $this->instantPush->publish(
             $channel['topic'],
             'تَكافل',
-            'هذا إشعار تجريبي. اضغط عليه لفتح الموقع.',
+            'هذا إشعار تجريبي من تطبيق ntfy.',
             $click
         );
 
-        $this->webPush->deliverToUserIds(
-            [(int) $user->id],
-            'تَكافل',
-            'هذا إشعار تجريبي. اضغط عليه لفتح الموقع.',
-            $click,
-            ['type' => 'push_test'],
-            false,
-        );
-
-        $hasBrowser = $user->pushSubscriptions()->exists();
-        $sent = $ntfyOk || $hasBrowser;
-
         return response()->json([
             ...$channel,
-            'sent' => $sent,
-            'browser' => $hasBrowser,
-            'ntfy' => $ntfyOk,
-            'message' => $sent
-                ? 'تم إرسال إشعار تجريبي. يفترض يطلع على هذا الجهاز إذا الإشعارات مفعّلة.'
-                : 'تعذر إرسال الإشعار التجريبي. فعّلي الإشعارات من الزر أعلاه ثم أعيدي المحاولة.',
-        ], $sent ? 200 : 502);
+            'sent' => $ok,
+            'ntfy' => $ok,
+            'message' => $ok
+                ? 'تم إرسال إشعار تجريبي. لازم يطلع على تطبيق ntfy المثبّت، مش من المتصفح.'
+                : 'تعذر إرسال الإشعار التجريبي. تأكدي إن تطبيق ntfy مربوط ثم أعيدي المحاولة.',
+        ], $ok ? 200 : 502);
     }
 
     public function subscribe(Request $request): JsonResponse

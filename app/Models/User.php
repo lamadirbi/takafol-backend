@@ -57,6 +57,7 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'is_super' => 'boolean',
+            'ntfy_linked_at' => 'datetime',
         ];
     }
 

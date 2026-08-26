@@ -33,13 +33,41 @@ class InstantPushService
         $topic = $this->ensureTopic($user);
         $info = $this->appInfo();
         $host = $info['host'];
+        $deep = 'ntfy://'.$host.'/'.$topic;
+        $play = (string) $info['play_store_url'];
+        $androidIntent = 'intent://'.$host.'/'.$topic
+            .'#Intent;scheme=ntfy;package=io.heckel.ntfy;S.browser_fallback_url='
+            .rawurlencode($play)
+            .';end';
 
         return [
             ...$info,
             'topic' => $topic,
-            'subscribe_url' => $info['base_url'].'/'.$topic,
-            'deep_link' => 'ntfy://'.$host.'/'.$topic,
+            'linked' => $user->ntfy_linked_at !== null,
+            'subscribe_url' => $deep,
+            'deep_link' => $deep,
+            'android_intent' => $androidIntent,
         ];
+    }
+
+    public function markLinked(User $user): array
+    {
+        $this->ensureTopic($user);
+        if ($user->ntfy_linked_at === null) {
+            $user->ntfy_linked_at = now();
+            $user->save();
+        }
+
+        return $this->channelFor($user->fresh() ?? $user);
+    }
+
+    public function unlink(User $user): array
+    {
+        $user->ntfy_topic = null;
+        $user->ntfy_linked_at = null;
+        $user->save();
+
+        return $this->channelFor($user->fresh() ?? $user);
     }
 
     public function ensureTopic(User $user): string
@@ -78,6 +106,7 @@ class InstantPushService
             ->with('camp:id,slug')
             ->whereIn('id', $ids)
             ->whereNotNull('ntfy_topic')
+            ->whereNotNull('ntfy_linked_at')
             ->get(['id', 'ntfy_topic', 'camp_id', 'role']);
 
         foreach ($users as $user) {

@@ -29,10 +29,16 @@ class InstantPushTest extends TestCase
 
         $res = $this->getJson('/api/push/instant-channel', $this->campHeaders($camp, $token))
             ->assertOk()
-            ->assertJsonStructure(['topic', 'subscribe_url', 'deep_link', 'play_store_url']);
+            ->assertJsonPath('linked', false);
 
         $topic = $res->json('topic');
+        $intent = (string) $res->json('android_intent');
         $this->assertNotEmpty($topic);
+        $this->assertStringStartsWith('ntfy://', (string) $res->json('deep_link'));
+        $this->assertStringContainsString('scheme=ntfy', $intent);
+        $this->assertStringContainsString('package=io.heckel.ntfy', $intent);
+        $this->assertStringContainsString('play.google.com', $intent);
+        $this->assertStringNotContainsString('scheme=https', $intent);
         $this->assertDatabaseHas('users', [
             'id' => $user->id,
             'ntfy_topic' => $topic,
@@ -49,6 +55,7 @@ class InstantPushTest extends TestCase
         $camp = $this->makeCamp();
         ['user' => $user] = $this->makeFamilyWithHead($camp);
         $topic = app(InstantPushService::class)->ensureTopic($user);
+        app(InstantPushService::class)->markLinked($user);
 
         app(WebPushService::class)->notifyUser(
             $user,
@@ -82,6 +89,7 @@ class InstantPushTest extends TestCase
         $this->setTenant($camp);
         ['user' => $user] = $this->makeFamilyWithHead($camp);
         $topic = app(InstantPushService::class)->ensureTopic($user);
+        app(InstantPushService::class)->markLinked($user);
 
         app(WebPushService::class)->notifyFamilyHeadsByUserIds(
             [$user->id],
@@ -92,6 +100,50 @@ class InstantPushTest extends TestCase
         );
 
         Http::assertSent(fn ($request) => ($request->data()['topic'] ?? null) === $topic);
+    }
+
+    public function test_unlinked_user_does_not_receive_ntfy(): void
+    {
+        Http::fake([
+            'https://ntfy.sh' => Http::response(['id' => 'ok'], 200),
+            'https://ntfy.sh/*' => Http::response(['id' => 'ok'], 200),
+        ]);
+
+        $camp = $this->makeCamp();
+        ['user' => $user] = $this->makeFamilyWithHead($camp);
+        app(InstantPushService::class)->ensureTopic($user);
+
+        app(WebPushService::class)->notifyUser(
+            $user,
+            'طرد بانتظارك',
+            'يوجد طرد جديد',
+            '/family/notifications',
+            ['type' => 'distribution_pending']
+        );
+
+        Http::assertNothingSent();
+    }
+
+    public function test_family_can_link_and_unlink_ntfy_app(): void
+    {
+        $camp = $this->makeCamp();
+        ['user' => $user, 'serial' => $serial] = $this->makeFamilyWithHead($camp);
+        $token = $this->loginFamily($user, $serial, $camp);
+
+        $linked = $this->postJson('/api/push/instant-channel/link', [], $this->campHeaders($camp, $token))
+            ->assertOk()
+            ->assertJsonPath('linked', true);
+
+        $oldTopic = $linked->json('topic');
+        $this->assertNotEmpty($oldTopic);
+        $this->assertNotNull($user->fresh()->ntfy_linked_at);
+
+        $unlinked = $this->postJson('/api/push/instant-channel/unlink', [], $this->campHeaders($camp, $token))
+            ->assertOk()
+            ->assertJsonPath('linked', false);
+
+        $this->assertNotSame($oldTopic, $unlinked->json('topic'));
+        $this->assertNull($user->fresh()->ntfy_linked_at);
     }
 
     public function test_public_key_reports_enabled_flag(): void

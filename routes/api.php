@@ -40,6 +40,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/push/subscribe', [PushController::class, 'subscribe']);
     Route::post('/push/unsubscribe', [PushController::class, 'unsubscribe']);
     Route::get('/push/instant-channel', [PushController::class, 'instantChannel']);
+    Route::post('/push/instant-channel/link', [PushController::class, 'instantLink']);
+    Route::post('/push/instant-channel/unlink', [PushController::class, 'instantUnlink']);
     Route::post('/push/instant-channel/test', [PushController::class, 'instantTest']);
 
     Route::middleware(['family_subscription', 'role:'.(User::ROLE_FAMILY_HEAD)])->group(function () {
