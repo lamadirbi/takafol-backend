@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\CampRegistrationRequest;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class CampRegistrationRequestController extends Controller
 {
@@ -48,7 +49,18 @@ class CampRegistrationRequestController extends Controller
             abort(403);
         }
 
-        $items = CampRegistrationRequest::query()->latest('id')->paginate(50);
+        $status = trim((string) $request->input('status', ''));
+        $query = CampRegistrationRequest::query()->latest('id');
+        if (in_array($status, [
+            CampRegistrationRequest::STATUS_PENDING,
+            CampRegistrationRequest::STATUS_APPROVED,
+            CampRegistrationRequest::STATUS_REJECTED,
+        ], true)) {
+            $query->where('status', $status);
+        }
+
+        $perPage = min(max(1, (int) $request->input('per_page', 20)), 50);
+        $items = $query->paginate($perPage);
 
         return response()->json($items);
     }
@@ -61,12 +73,21 @@ class CampRegistrationRequestController extends Controller
 
         $validated = $request->validate([
             'status' => ['required', 'string', 'in:pending,approved,rejected'],
-            'admin_note' => ['nullable', 'string', 'max:5000'],
+            'admin_note' => [
+                Rule::requiredIf($request->input('status') === CampRegistrationRequest::STATUS_REJECTED),
+                'nullable',
+                'string',
+                'max:5000',
+            ],
+        ], [
+            'admin_note.required' => 'اكتب سبب الرفض حتى يبقى واضحاً في السجل وعند التواصل مع مقدّم الطلب.',
         ]);
+
+        $note = isset($validated['admin_note']) ? trim((string) $validated['admin_note']) : '';
 
         $campRegistrationRequest->update([
             'status' => $validated['status'],
-            'admin_note' => isset($validated['admin_note']) ? trim((string) $validated['admin_note']) : null,
+            'admin_note' => $note !== '' ? $note : null,
         ]);
 
         return response()->json($campRegistrationRequest->fresh());

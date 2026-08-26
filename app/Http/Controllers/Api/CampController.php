@@ -4,9 +4,11 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Camp;
-use Illuminate\Http\Request;
-use Illuminate\Validation\Rule;
+use App\Support\TenantCache;
 use Carbon\Carbon;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Validation\Rule;
 
 class CampController extends Controller
 {
@@ -15,7 +17,16 @@ class CampController extends Controller
      */
     public function index()
     {
-        $camps = Camp::where('is_active', true)->get();
+        $camps = Cache::flexible(
+            TenantCache::publicCampsKey(),
+            [TenantCache::TTL_SHORT, TenantCache::TTL_MEDIUM],
+            function () {
+                return Camp::query()
+                    ->where('is_active', true)
+                    ->orderBy('name')
+                    ->get(['id', 'name', 'slug', 'logo_path', 'subscription_valid_until']);
+            }
+        );
 
         return response()->json($camps->map(function (Camp $camp) {
             return [
@@ -26,7 +37,7 @@ class CampController extends Controller
                 'families_portal_locked' => $camp->familiesHardBlocked(),
                 'families_in_subscription_grace' => $camp->familiesInGracePeriod(),
             ];
-        }));
+        }))->header('Cache-Control', 'public, max-age=60');
     }
 
     /**
@@ -43,14 +54,17 @@ class CampController extends Controller
 
     public function show(string $slug)
     {
-        $camp = Camp::where('slug', $slug)->where('is_active', true)->firstOrFail();
+        $camp = TenantCache::rememberActiveBySlug($slug);
+        if (! $camp) {
+            abort(404);
+        }
 
         return response()->json(array_merge($camp->toArray(), [
             'subscription_notice_image_url' => $camp->subscriptionNoticeImageUrl(),
             'subscription' => $camp->subscriptionAdminMeta(),
             'families_portal_locked' => $camp->familiesHardBlocked(),
             'families_in_subscription_grace' => $camp->familiesInGracePeriod(),
-        ]));
+        ]))->header('Cache-Control', 'private, max-age=30');
     }
 
     public function store(Request $request)

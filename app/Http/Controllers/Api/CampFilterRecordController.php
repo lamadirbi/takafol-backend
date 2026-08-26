@@ -24,6 +24,13 @@ class CampFilterRecordController extends Controller
             ->latest()
             ->paginate($perPage);
 
+        $records->getCollection()->transform(function (CampFilterRecord $record) {
+            $record->setAttribute('snapshot', $record->summarySnapshot());
+            $record->syncOriginalAttribute('snapshot');
+
+            return $record;
+        });
+
         return CampFilterRecordResource::collection($records)->response();
     }
 
@@ -314,5 +321,4 @@ class CampFilterRecordController extends Controller
 
         return response()->json(null, 204);
     }
-
 }

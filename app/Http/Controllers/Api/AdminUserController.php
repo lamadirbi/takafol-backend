@@ -28,7 +28,7 @@ class AdminUserController extends Controller
                 ->orderBy('id');
         }
 
-        $users = $q->get();
+        $users = $q->with('camp:id,primary_admin_user_id')->get();
 
         return UserResource::collection($users)->response();
     }

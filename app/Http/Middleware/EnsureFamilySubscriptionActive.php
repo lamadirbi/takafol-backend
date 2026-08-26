@@ -2,8 +2,8 @@
 
 namespace App\Http\Middleware;
 
-use App\Models\Camp;
 use App\Models\User;
+use App\Services\TenantManager;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -29,7 +29,7 @@ class EnsureFamilySubscriptionActive
             return $next($request);
         }
 
-        $camp = Camp::query()->find($user->camp_id);
+        $camp = app(TenantManager::class)->campForId((int) $user->camp_id);
         if (! $camp || ! $camp->familiesAccessAllowed()) {
             return response()->json([
                 'message' => 'انتهى اشتراك المخيم وفترة السماح؛ لا يمكن الاستمرار حتى يُحدَّد تاريخ اشتراك جديد من إدارة المنصة.',

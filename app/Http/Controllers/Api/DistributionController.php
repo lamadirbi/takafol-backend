@@ -14,14 +14,13 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class DistributionController extends Controller
 {
-    public function __construct(private readonly WebPushService $webPush)
-    {
-    }
+    public function __construct(private readonly WebPushService $webPush) {}
 
     /**
      * تأكيد استلام طرد لعائلة واحدة ضمن سجل فلترة واسم طرد محدد.
@@ -92,7 +91,16 @@ class DistributionController extends Controller
     public function index(Request $request): AnonymousResourceCollection
     {
         $query = Distribution::query()
-            ->with(['family.user', 'packageType', 'administeredBy', 'campFilterRecord']);
+            ->with([
+                'family' => function ($q) {
+                    $q->with(Family::ADMIN_USER_EAGER)
+                        ->withProfileCompletenessCounts();
+                },
+                'packageType:id,name,description',
+                'administeredBy:id,name,role,username,is_super,camp_id,created_at,national_id,email',
+                'administeredBy.camp:id,primary_admin_user_id',
+                'campFilterRecord:id,name,created_at',
+            ]);
 
         if ($request->filled('status')) {
             $query->where('status', $request->string('status'));
@@ -176,35 +184,56 @@ class DistributionController extends Controller
         $idsFromSnap = collect($familiesSnap)->pluck('id')->filter()->unique()->values()->all();
         $familyIds = Family::query()->whereIn('id', $idsFromSnap)->pluck('id')->all();
 
+        if ($familyIds === []) {
+            return response()->json([
+                'created' => 0,
+                'skipped' => 0,
+                'families_in_record' => 0,
+                'camp_filter_record_id' => $record->id,
+                'package_label' => $packageLabel,
+            ]);
+        }
+
         $created = 0;
         $skipped = 0;
+        $campId = App::has('current_camp_id') ? (int) App::get('current_camp_id') : null;
 
-        DB::transaction(function () use ($familyIds, $packageTypeId, $packageLabel, $request, $record, &$created, &$skipped) {
+        DB::transaction(function () use ($familyIds, $packageTypeId, $packageLabel, $request, $record, $campId, &$created, &$skipped) {
+            $existingQuery = Distribution::query()
+                ->whereIn('family_id', $familyIds)
+                ->where('status', Distribution::STATUS_PENDING);
+            if ($packageTypeId !== null) {
+                $existingQuery->where('package_type_id', $packageTypeId);
+            } else {
+                $existingQuery->whereNull('package_type_id')->where('package_label', $packageLabel);
+            }
+            $existing = array_flip($existingQuery->pluck('family_id')->all());
+
+            $now = now();
+            $rows = [];
             foreach ($familyIds as $familyId) {
-                $dupQuery = Distribution::query()
-                    ->where('family_id', $familyId)
-                    ->where('status', Distribution::STATUS_PENDING);
-                if ($packageTypeId !== null) {
-                    $dupQuery->where('package_type_id', $packageTypeId);
-                } else {
-                    $dupQuery->whereNull('package_type_id')->where('package_label', $packageLabel);
-                }
-                $dup = $dupQuery->exists();
-                if ($dup) {
+                if (isset($existing[$familyId])) {
                     $skipped++;
 
                     continue;
                 }
 
-                Distribution::query()->create([
+                $rows[] = [
                     'family_id' => $familyId,
                     'package_type_id' => $packageTypeId,
                     'package_label' => $packageLabel,
                     'camp_filter_record_id' => $record->id,
                     'status' => Distribution::STATUS_PENDING,
                     'administered_by' => $request->user()->id,
-                ]);
+                    'camp_id' => $campId,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
                 $created++;
+            }
+
+            foreach (array_chunk($rows, 200) as $chunk) {
+                Distribution::query()->insert($chunk);
             }
         });
 
@@ -216,7 +245,7 @@ class DistributionController extends Controller
                 $userIds,
                 'لديك إشعار جديد',
                 $packageLabel ? ('طرد بانتظار الاستلام: '.$packageLabel) : 'تم إضافة طرد بانتظار الاستلام.',
-                '/dashboard',
+                '/family/notifications',
                 [
                     'type' => 'distribution_pending',
                     'camp_filter_record_id' => $record->id,

@@ -2,8 +2,11 @@
 
 namespace App\Models;
 
+use App\Support\TenantCache;
 use App\Traits\BelongsToTenant;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\App;
+use Illuminate\Support\Facades\Cache;
 
 class SiteSetting extends Model
 {
@@ -26,15 +29,26 @@ class SiteSetting extends Model
 
     public static function putValue(string $key, ?string $value): void
     {
-        static::query()->updateOrCreate(
-            ['key' => $key],
+        $campId = App::has('current_camp_id') ? App::get('current_camp_id') : null;
+
+        static::withoutGlobalScopes()->updateOrCreate(
+            [
+                'key' => $key,
+                'camp_id' => $campId,
+            ],
             ['value' => $value]
         );
+
+        TenantCache::forgetSiteSettings($campId !== null ? (int) $campId : 0);
     }
 
     /** @return array<string, string|null> */
     public static function allAsMap(): array
     {
-        return static::query()->pluck('value', 'key')->all();
+        return Cache::remember(
+            TenantCache::siteSettingsKey(),
+            TenantCache::ttl(TenantCache::TTL_LONG),
+            fn () => static::query()->pluck('value', 'key')->all()
+        );
     }
 }

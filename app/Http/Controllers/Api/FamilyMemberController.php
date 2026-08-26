@@ -26,7 +26,7 @@ class FamilyMemberController extends Controller
         ]);
 
         $member = $family->members()->create($data);
-        $family->update(['total_members' => $family->members()->count()]);
+        $family->increment('total_members');
 
         return response()->json(['data' => $member], 201);
     }
@@ -48,7 +48,6 @@ class FamilyMemberController extends Controller
         ]);
 
         $member->update($data);
-        $family->update(['total_members' => $family->members()->count()]);
 
         return response()->json(['data' => $member->fresh()]);
     }
@@ -58,7 +57,7 @@ class FamilyMemberController extends Controller
         abort_unless($member->family_id === $family->id, 404);
 
         $member->delete();
-        $family->update(['total_members' => $family->members()->count()]);
+        $family->decrement('total_members');
 
         return response()->json(null, 204);
     }

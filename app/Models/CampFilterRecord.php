@@ -39,4 +39,26 @@ class CampFilterRecord extends Model
     {
         return $this->hasMany(Distribution::class);
     }
+
+    /**
+     * لقطة القائمة: الإحصاءات فقط دون مصفوفة العائلات الضخمة.
+     *
+     * @return array<string, mixed>
+     */
+    public function summarySnapshot(): array
+    {
+        $snapshot = is_array($this->snapshot) ? $this->snapshot : [];
+        unset($snapshot['families']);
+
+        if (! isset($snapshot['families_count']) && is_array($this->snapshot['families'] ?? null)) {
+            $snapshot['families_count'] = count($this->snapshot['families']);
+        }
+
+        if (! isset($snapshot['members_count']) && is_array($this->snapshot['families'] ?? null)) {
+            $snapshot['members_count'] = collect($this->snapshot['families'])
+                ->sum(fn ($family) => is_array($family['members'] ?? null) ? count($family['members']) : 0);
+        }
+
+        return $snapshot;
+    }
 }

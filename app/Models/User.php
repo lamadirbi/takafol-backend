@@ -2,23 +2,38 @@
 
 namespace App\Models;
 
+use App\Support\TenantCache;
 use App\Traits\BelongsToTenant;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\Cache;
 use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
-    use HasApiTokens, HasFactory, Notifiable, BelongsToTenant;
+    use BelongsToTenant, HasApiTokens, HasFactory, Notifiable;
 
     public const ROLE_ADMIN = 'admin';
 
     public const ROLE_FAMILY_HEAD = 'family_head';
+
+    protected static function booted(): void
+    {
+        $forgetFirstAdmin = function (User $user): void {
+            if ($user->camp_id && ($user->role === self::ROLE_ADMIN || $user->getOriginal('role') === self::ROLE_ADMIN)) {
+                TenantCache::forgetFirstAdmin((int) $user->camp_id);
+            }
+        };
+
+        static::saved($forgetFirstAdmin);
+        static::deleted($forgetFirstAdmin);
+    }
 
     protected $fillable = [
         'national_id',
@@ -48,6 +63,11 @@ class User extends Authenticatable
     public function family(): HasOne
     {
         return $this->hasOne(Family::class);
+    }
+
+    public function camp(): BelongsTo
+    {
+        return $this->belongsTo(Camp::class);
     }
 
     public function administeredDistributions(): HasMany
@@ -93,7 +113,7 @@ class User extends Authenticatable
         if (! $this->isAdmin() || $this->camp_id === null) {
             return false;
         }
-        $camp = Camp::query()->find($this->camp_id);
+        $camp = $this->relationLoaded('camp') ? $this->camp : $this->camp()->first();
         if (! $camp) {
             return false;
         }
@@ -101,13 +121,17 @@ class User extends Authenticatable
             return (int) $camp->primary_admin_user_id === (int) $this->id;
         }
 
-        $first = static::withoutGlobalScopes()
-            ->where('camp_id', $this->camp_id)
-            ->where('role', self::ROLE_ADMIN)
-            ->orderBy('id')
-            ->first();
+        $firstId = Cache::remember(
+            TenantCache::firstAdminKey((int) $this->camp_id),
+            TenantCache::ttl(TenantCache::TTL_MEDIUM),
+            fn () => static::withoutGlobalScopes()
+                ->where('camp_id', $this->camp_id)
+                ->where('role', self::ROLE_ADMIN)
+                ->orderBy('id')
+                ->value('id')
+        );
 
-        return $first !== null && (int) $first->id === (int) $this->id;
+        return $firstId !== null && (int) $firstId === (int) $this->id;
     }
 
     /**

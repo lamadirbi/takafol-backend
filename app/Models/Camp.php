@@ -2,12 +2,25 @@
 
 namespace App\Models;
 
+use App\Support\TenantCache;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Camp extends Model
 {
+    protected static function booted(): void
+    {
+        static::saved(function (Camp $camp) {
+            $previousSlug = $camp->wasChanged('slug') ? (string) $camp->getOriginal('slug') : null;
+            TenantCache::forgetCamp($camp, $previousSlug);
+        });
+
+        static::deleted(function (Camp $camp) {
+            TenantCache::forgetCamp($camp);
+        });
+    }
+
     public function primaryAdmin(): BelongsTo
     {
         return $this->belongsTo(User::class, 'primary_admin_user_id');
@@ -127,7 +140,7 @@ class Camp extends Model
     public function subscriptionAdminMeta(): array
     {
         $grace = $this->graceDays();
-        $amount = (int) config('subscription.monthly_amount_ils', 15);
+        $amount = (int) config('subscription.monthly_amount_ils', 50);
 
         if ($this->subscription_valid_until === null) {
             return [

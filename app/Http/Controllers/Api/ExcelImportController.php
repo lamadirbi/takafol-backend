@@ -35,8 +35,11 @@ class ExcelImportController extends Controller
         $created = 0;
         $updated = 0;
         $skipped = 0;
+        $usersByNationalId = [];
 
-        DB::transaction(function () use ($reader, &$header, &$created, &$updated, &$skipped) {
+        DB::connection()->disableQueryLog();
+
+        DB::transaction(function () use ($reader, &$header, &$created, &$updated, &$skipped, &$usersByNationalId) {
             foreach ($reader->getSheetIterator() as $sheet) {
                 foreach ($sheet->getRowIterator() as $rowIndex => $row) {
                     $cells = [];
@@ -46,20 +49,21 @@ class ExcelImportController extends Controller
 
                     if ($rowIndex === 1) {
                         $header = array_map(fn ($v) => trim((string) $v), $cells);
+
                         continue;
                     }
 
                     $mapped = $this->mapFamilyRow($header ?? [], $cells);
                     if ($mapped === null) {
                         $skipped++;
+
                         continue;
                     }
 
                     $nationalId = $mapped['national_id'];
                     $currentCampId = App::has('current_camp_id') ? (int) App::get('current_camp_id') : null;
 
-                    // بدون نطاق المخيم: User له نطاق camp_id فيُخفى المستخدمون من مخيمات أخرى فيُعاد إنشاء نفس national_id → 1062
-                    $user = User::withoutGlobalScopes()
+                    $user = $usersByNationalId[$nationalId] ?? User::withoutGlobalScopes()
                         ->where('national_id', $nationalId)
                         ->first();
 
@@ -79,6 +83,7 @@ class ExcelImportController extends Controller
                             ->where('user_id', $user->id)
                             ->first();
                         if ($familyOtherCamp && (int) $familyOtherCamp->camp_id !== (int) $currentCampId) {
+                            $usersByNationalId[$nationalId] = $user;
                             $skipped++;
 
                             continue;
@@ -90,6 +95,8 @@ class ExcelImportController extends Controller
                         }
                         $user->save();
                     }
+
+                    $usersByNationalId[$nationalId] = $user;
 
                     $family = Family::query()->where('user_id', $user->id)->first();
                     $payload = [
@@ -116,12 +123,9 @@ class ExcelImportController extends Controller
 
                             continue;
                         }
-                        Family::query()->create($payload);
+                        $family = Family::query()->create($payload);
                         $created++;
                     }
-
-                    // أفراد الأسرة: لا يوجد أطفال في الملف، لكن ننشئ/نحدّث رب الأسرة (+ الزوج/ة إن وجدت)
-                    $family = Family::query()->where('user_id', $user->id)->firstOrFail();
 
                     $this->upsertHeadMember($family, $mapped);
                     $this->upsertSpouseMember($family, $mapped);
@@ -176,11 +180,17 @@ class ExcelImportController extends Controller
 
         $wifeName = trim((string) ($row['اسم الزوجة رباعي'] ?? ''));
         $wifeId = trim((string) ($row['رقم هوية الزوجة'] ?? ''));
-        if ($wifeName === '-' || $wifeName === '—') $wifeName = '';
-        if ($wifeId === '-' || $wifeId === '—') $wifeId = '';
+        if ($wifeName === '-' || $wifeName === '—') {
+            $wifeName = '';
+        }
+        if ($wifeId === '-' || $wifeId === '—') {
+            $wifeId = '';
+        }
 
         $phone = trim((string) ($row['رقم الموبايل'] ?? ''));
-        if ($phone === '-' || $phone === '—') $phone = '';
+        if ($phone === '-' || $phone === '—') {
+            $phone = '';
+        }
 
         $total = $row["عدد افراد\nالاسرة الكلي"] ?? ($row['عدد افراد الاسرة الكلي'] ?? null);
         $totalMembers = is_numeric($total) ? (int) $total : null;
@@ -275,4 +285,3 @@ class ExcelImportController extends Controller
         }
     }
 }
-

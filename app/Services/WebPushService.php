@@ -2,24 +2,37 @@
 
 namespace App\Services;
 
+use App\Jobs\SendWebPushToRole;
+use App\Jobs\SendWebPushToUsers;
 use App\Models\PushSubscription;
 use App\Models\User;
+use Illuminate\Support\Facades\App;
 use Minishlink\WebPush\Subscription;
 use Minishlink\WebPush\WebPush;
 
 class WebPushService
 {
-    private function makeWebPush(): WebPush
+    private function makeWebPush(): ?WebPush
     {
-        $subject = config('app.url') ?: (string) env('VAPID_SUBJECT', 'mailto:admin@example.com');
+        $publicKey = trim((string) env('VAPID_PUBLIC_KEY', ''));
+        $privateKey = trim((string) env('VAPID_PRIVATE_KEY', ''));
+        if ($publicKey === '' || $privateKey === '') {
+            return null;
+        }
 
-        return new WebPush([
-            'VAPID' => [
-                'subject' => $subject,
-                'publicKey' => (string) env('VAPID_PUBLIC_KEY', ''),
-                'privateKey' => (string) env('VAPID_PRIVATE_KEY', ''),
-            ],
-        ]);
+        try {
+            $subject = config('app.url') ?: (string) env('VAPID_SUBJECT', 'mailto:admin@example.com');
+
+            return new WebPush([
+                'VAPID' => [
+                    'subject' => $subject,
+                    'publicKey' => $publicKey,
+                    'privateKey' => $privateKey,
+                ],
+            ]);
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**
@@ -27,16 +40,33 @@ class WebPushService
      */
     public function notifyUser(User $user, string $title, string $body, ?string $url = null, array $data = []): void
     {
-        $subs = $user->pushSubscriptions()->get();
-        if ($subs->isEmpty()) {
-            return;
-        }
+        $this->sendInstant([(int) $user->id], $title, $body, $url, $data);
 
-        $webPush = $this->makeWebPush();
-        foreach ($subs as $sub) {
-            $this->queueNotification($webPush, $sub, $title, $body, $url, $data);
+        try {
+            $subs = $user->pushSubscriptions()->get();
+            if ($subs->isEmpty()) {
+                return;
+            }
+
+            $webPush = $this->makeWebPush();
+            if (! $webPush) {
+                return;
+            }
+            foreach ($subs as $sub) {
+                $this->queueNotification($webPush, $sub, $title, $body, $url, $data);
+            }
+            $this->flushAndCleanup($webPush, $user->id);
+        } catch (\Throwable) {
+            // لا نكسر العملية الأساسية بسبب إعداد Push غير مكتمل.
         }
-        $this->flushAndCleanup($webPush, $user->id);
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    public function notifyAllFamilyHeadsAfterResponse(string $title, string $body, ?string $url = null, array $data = []): void
+    {
+        $this->dispatchRole(User::ROLE_FAMILY_HEAD, $title, $body, $url, $data);
     }
 
     /**
@@ -44,43 +74,23 @@ class WebPushService
      */
     public function notifyAllFamilyHeads(string $title, string $body, ?string $url = null, array $data = []): void
     {
-        $webPush = $this->makeWebPush();
-
-        $q = PushSubscription::query()
-            ->whereHas('user', fn ($u) => $u->where('role', User::ROLE_FAMILY_HEAD))
-            ->with('user:id,role');
-
-        $userIdsTouched = [];
-        foreach ($q->cursor() as $sub) {
-            /** @var PushSubscription $sub */
-            $this->queueNotification($webPush, $sub, $title, $body, $url, $data);
-            $userIdsTouched[(int) $sub->user_id] = true;
-        }
-
-        $this->flushAndCleanup($webPush, array_keys($userIdsTouched));
+        $this->notifyRole(User::ROLE_FAMILY_HEAD, $title, $body, $url, $data);
     }
 
     /**
-     * إشعار جميع المستخدمين بدور الإدارة (مشتركي Push).
-     *
+     * @param  array<string, mixed>  $data
+     */
+    public function notifyAllAdminsAfterResponse(string $title, string $body, ?string $url = null, array $data = []): void
+    {
+        $this->dispatchRole(User::ROLE_ADMIN, $title, $body, $url, $data);
+    }
+
+    /**
      * @param  array<string, mixed>  $data
      */
     public function notifyAllAdmins(string $title, string $body, ?string $url = null, array $data = []): void
     {
-        $webPush = $this->makeWebPush();
-
-        $q = PushSubscription::query()
-            ->whereHas('user', fn ($u) => $u->where('role', User::ROLE_ADMIN))
-            ->with('user:id,role');
-
-        $userIdsTouched = [];
-        foreach ($q->cursor() as $sub) {
-            /** @var PushSubscription $sub */
-            $this->queueNotification($webPush, $sub, $title, $body, $url, $data);
-            $userIdsTouched[(int) $sub->user_id] = true;
-        }
-
-        $this->flushAndCleanup($webPush, array_keys($userIdsTouched));
+        $this->notifyRole(User::ROLE_ADMIN, $title, $body, $url, $data);
     }
 
     /**
@@ -94,17 +104,103 @@ class WebPushService
             return;
         }
 
+        SendWebPushToUsers::dispatch(
+            $ids,
+            $title,
+            $body,
+            $url,
+            $data,
+            $this->currentCampId(),
+        )->afterResponse();
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    public function notifyRole(string $role, string $title, string $body, ?string $url, array $data): void
+    {
+        $roleIds = User::query()->where('role', $role)->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $this->sendInstant($roleIds, $title, $body, $url, $data);
+
+        try {
+            $webPush = $this->makeWebPush();
+            if (! $webPush) {
+                return;
+            }
+
+            $userIdsTouched = [];
+            $userIds = User::query()->where('role', $role)->select('id');
+
+            PushSubscription::query()
+                ->whereIn('user_id', $userIds)
+                ->chunkById(200, function ($subs) use ($webPush, $title, $body, $url, $data, &$userIdsTouched) {
+                    foreach ($subs as $sub) {
+                        $this->queueNotification($webPush, $sub, $title, $body, $url, $data);
+                        $userIdsTouched[(int) $sub->user_id] = true;
+                    }
+                });
+
+            $this->flushAndCleanup($webPush, array_keys($userIdsTouched));
+        } catch (\Throwable) {
+            // لا نكسر العملية الأساسية بسبب إعداد Push غير مكتمل.
+        }
+    }
+
+    /**
+     * @param  list<int>  $userIds
+     * @param  array<string, mixed>  $data
+     */
+    public function deliverToUserIds(array $userIds, string $title, string $body, ?string $url, array $data): void
+    {
+        $this->sendInstant($userIds, $title, $body, $url, $data);
+
         $webPush = $this->makeWebPush();
-
-        $subs = PushSubscription::query()
-            ->whereIn('user_id', $ids)
-            ->get();
-
-        foreach ($subs as $sub) {
-            $this->queueNotification($webPush, $sub, $title, $body, $url, $data);
+        if (! $webPush) {
+            return;
         }
 
-        $this->flushAndCleanup($webPush, $ids);
+        PushSubscription::query()
+            ->whereIn('user_id', $userIds)
+            ->chunkById(200, function ($subs) use ($webPush, $title, $body, $url, $data) {
+                foreach ($subs as $sub) {
+                    $this->queueNotification($webPush, $sub, $title, $body, $url, $data);
+                }
+            });
+
+        $this->flushAndCleanup($webPush, $userIds);
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function dispatchRole(string $role, string $title, string $body, ?string $url, array $data): void
+    {
+        SendWebPushToRole::dispatch(
+            $role,
+            $title,
+            $body,
+            $url,
+            $data,
+            $this->currentCampId(),
+        )->afterResponse();
+    }
+
+    private function currentCampId(): ?int
+    {
+        return App::has('current_camp_id') ? (int) App::get('current_camp_id') : null;
+    }
+
+    /**
+     * @param  list<int>  $userIds
+     * @param  array<string, mixed>  $data
+     */
+    private function sendInstant(array $userIds, string $title, string $body, ?string $url, array $data): void
+    {
+        try {
+            app(InstantPushService::class)->notifyUserIds($userIds, $title, $body, $url, $data);
+        } catch (\Throwable) {
+            // لا نكسر العملية الأساسية إذا تعذّر ntfy.
+        }
     }
 
     /**
@@ -158,4 +254,3 @@ class WebPushService
         }
     }
 }
-

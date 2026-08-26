@@ -2,44 +2,83 @@
 
 namespace App\Http\Middleware;
 
-use App\Models\Camp;
 use App\Services\TenantManager;
+use App\Support\TenantCache;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 class TenantMiddleware
 {
-    public function __construct(protected TenantManager $tenantManager)
-    {
-    }
+    public function __construct(protected TenantManager $tenantManager) {}
 
     /**
      * Handle an incoming request.
      */
     public function handle(Request $request, Closure $next): Response
     {
-        // 1. Check for header (useful for API calls from subdomains to a shared backend)
-        $slug = $request->header('X-Camp-Slug');
+        $this->tenantManager->clear();
 
-        // 2. Fallback to subdomain if no header
-        if (! $slug) {
-            $host = $request->getHost();
-            $parts = explode('.', $host);
-            if (count($parts) >= 2) {
-                // If it's a subdomain, parts[0] is the slug
-                // Note: This logic might need adjustment based on production TLD (e.g. .com.sa)
-                $slug = $parts[0];
-            }
-        }
+        $slug = $this->resolveCampSlug($request);
 
-        if ($slug && ! in_array(strtolower((string) $slug), ['www'], true)) {
-            $camp = Camp::where('slug', $slug)->where('is_active', true)->first();
-            if ($camp) {
-                $this->tenantManager->setCurrentCamp($camp);
+        if ($slug !== null) {
+            try {
+                $camp = TenantCache::rememberActiveBySlug($slug);
+                if ($camp) {
+                    $this->tenantManager->setCurrentCamp($camp);
+                }
+            } catch (\Throwable) {
+                // أثناء الاختبار أو قبل اكتمال المهاجرات لا نمنع الطلب.
             }
         }
 
         return $next($request);
+    }
+
+    private function resolveCampSlug(Request $request): ?string
+    {
+        $header = trim((string) $request->header('X-Camp-Slug', ''));
+        if ($header !== '' && ! $this->isReservedSlug($header)) {
+            return $header;
+        }
+
+        $host = strtolower((string) $request->getHost());
+        if ($host === '' || $this->isIgnoredHost($host)) {
+            return null;
+        }
+
+        $parts = explode('.', $host);
+        if (count($parts) < 2) {
+            return null;
+        }
+
+        $candidate = $parts[0];
+        if ($this->isReservedSlug($candidate)) {
+            return null;
+        }
+
+        return $candidate;
+    }
+
+    private function isIgnoredHost(string $host): bool
+    {
+        if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
+            return true;
+        }
+
+        if (str_ends_with($host, '.sslip.io') || str_ends_with($host, '.nip.io')) {
+            return true;
+        }
+
+        return in_array($host, ['localhost', '::1'], true);
+    }
+
+    private function isReservedSlug(string $slug): bool
+    {
+        $slug = strtolower(trim($slug));
+
+        return $slug === ''
+            || ctype_digit($slug)
+            || in_array($slug, ['www', 'localhost', 'api', 'admin', 'super-admin', 'takafol'], true);
     }
 }

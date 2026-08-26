@@ -23,11 +23,12 @@ class AnnouncementResource extends JsonResource
             'published_at' => $this->published_at,
             'admin_user' => new UserResource($this->whenLoaded('adminUser')),
             'comments' => CommentResource::collection($this->whenLoaded('comments')),
+            'comments_count' => $this->when(isset($this->resource->getAttributes()['comments_count']), fn () => (int) $this->comments_count),
             'created_at' => $this->created_at,
             'reaction_counts' => [
-                'like' => (int) ($this->reactions_like_count ?? 0),
-                'interested' => (int) ($this->reactions_interested_count ?? 0),
-                'thanks' => (int) ($this->reactions_thanks_count ?? 0),
+                'like' => (int) ($this->resource->getAttributes()['reactions_like_count'] ?? 0),
+                'interested' => (int) ($this->resource->getAttributes()['reactions_interested_count'] ?? 0),
+                'thanks' => (int) ($this->resource->getAttributes()['reactions_thanks_count'] ?? 0),
             ],
             'my_reactions' => $this->when($request->user() && $this->relationLoaded('reactions'), function () {
                 return [

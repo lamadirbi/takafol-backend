@@ -4,14 +4,17 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\PushSubscription;
+use App\Services\InstantPushService;
 use App\Services\WebPushService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class PushController extends Controller
 {
-    public function __construct(private readonly WebPushService $webPush)
-    {
+    public function __construct(
+        private readonly WebPushService $webPush,
+        private readonly InstantPushService $instantPush,
+    ) {
     }
 
     public function publicKey(): JsonResponse
@@ -19,6 +22,43 @@ class PushController extends Controller
         return response()->json([
             'public_key' => (string) env('VAPID_PUBLIC_KEY', ''),
         ]);
+    }
+
+    public function instantApp(): JsonResponse
+    {
+        return response()->json($this->instantPush->appInfo());
+    }
+
+    public function instantChannel(Request $request): JsonResponse
+    {
+        return response()->json($this->instantPush->channelFor($request->user()));
+    }
+
+    public function instantTest(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $user->loadMissing('camp:id,slug');
+        $channel = $this->instantPush->channelFor($user);
+        $click = $this->instantPush->destinationUrl(
+            $user->isAdmin() ? '/admin/dashboard' : '/family/notifications',
+            [],
+            $user->camp?->slug,
+            $user
+        );
+        $ok = $this->instantPush->publish(
+            $channel['topic'],
+            'تَكافل',
+            'هذا إشعار تجريبي. اضغط عليه لفتح الموقع.',
+            $click
+        );
+
+        return response()->json([
+            ...$channel,
+            'sent' => $ok,
+            'message' => $ok
+                ? 'تم إرسال إشعار تجريبي. راجعي تطبيق ntfy.'
+                : 'تعذر إرسال الإشعار التجريبي. تأكد من الاتصال ثم أعد المحاولة.',
+        ], $ok ? 200 : 502);
     }
 
     public function subscribe(Request $request): JsonResponse

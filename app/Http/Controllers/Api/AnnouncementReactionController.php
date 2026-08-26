@@ -46,10 +46,15 @@ class AnnouncementReactionController extends Controller
             $active = true;
         }
 
+        $counts = $announcement->reactions()
+            ->selectRaw('type, COUNT(*) as aggregate_count')
+            ->groupBy('type')
+            ->pluck('aggregate_count', 'type');
+
         $reactionCounts = [
-            'like' => $announcement->reactions()->where('type', AnnouncementReaction::TYPE_LIKE)->count(),
-            'interested' => $announcement->reactions()->where('type', AnnouncementReaction::TYPE_INTERESTED)->count(),
-            'thanks' => $announcement->reactions()->where('type', AnnouncementReaction::TYPE_THANKS)->count(),
+            'like' => (int) ($counts[AnnouncementReaction::TYPE_LIKE] ?? 0),
+            'interested' => (int) ($counts[AnnouncementReaction::TYPE_INTERESTED] ?? 0),
+            'thanks' => (int) ($counts[AnnouncementReaction::TYPE_THANKS] ?? 0),
         ];
 
         return response()->json([

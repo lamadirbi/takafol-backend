@@ -12,7 +12,12 @@ use Illuminate\Http\Request;
 
 class Family extends Model
 {
-    use HasFactory, BelongsToTenant;
+    use BelongsToTenant, HasFactory;
+
+    public const ADMIN_USER_EAGER = 'user:id,name,role,national_id,username,is_super,camp_id,created_at';
+
+    /** @var list<string> */
+    public const MEMBER_LIST_COLUMNS = ['id', 'family_id', 'name', 'age', 'date_of_birth', 'relationship', 'gender'];
 
     protected $fillable = [
         'user_id',
@@ -54,9 +59,9 @@ class Family extends Model
     /**
      * استعلام موحّد لفلترة العائلات في لوحة الإدارة وحفظ السجلات.
      */
-    public static function queryForAdminFilters(Request $request): Builder
+    public static function queryForAdminFilters(Request $request, bool $withMembers = true): Builder
     {
-        $query = static::query()->with('user');
+        $query = static::query()->with(self::ADMIN_USER_EAGER);
 
         $scope = strtolower(trim((string) $request->input('filter_scope', 'family')));
 
@@ -113,7 +118,9 @@ class Family extends Model
             if (! $hasAge && ! $hasGender && ! $hasRel) {
                 // فلترة «أفراد» بدون شروط فرعية: عائلات لديها فرد مسجّل على الأقل
                 $query->whereHas('members');
-                $query->with('members');
+                if ($withMembers) {
+                    $query->with(['members' => self::constrainMemberListColumns(...)]);
+                }
             } else {
                 /**
                  * نفس الفلتر يُستخدم في:
@@ -130,10 +137,17 @@ class Family extends Model
                 };
 
                 $query->whereHas('members', $memberFilter);
-                $query->with(['members' => $memberFilter]);
+                if ($withMembers) {
+                    $query->with(['members' => function ($q) use ($memberFilter) {
+                        self::constrainMemberListColumns($q);
+                        $memberFilter($q);
+                    }]);
+                }
             }
         } else {
-            $query->with('members');
+            if ($withMembers) {
+                $query->with(['members' => self::constrainMemberListColumns(...)]);
+            }
             $query->socialStatus($request->input('social_status'));
             $query->financialStatus($request->input('financial_status'));
 
@@ -146,19 +160,29 @@ class Family extends Model
 
             if ($request->boolean('has_newborn')) {
                 $query->whereHas('members', function (Builder $q) {
+                    $years = FamilyMember::yearsSinceDobExpression($q);
                     $q->whereIn('relationship', ['ابن', 'ابنة'])
-                        ->where(function (Builder $qq) {
-                            $qq->whereNotNull('date_of_birth')
-                                ->whereRaw('TIMESTAMPDIFF(YEAR, `date_of_birth`, CURDATE()) = 0')
-                                ->orWhere(function (Builder $q2) {
-                                    $q2->whereNull('date_of_birth')->whereNotNull('age')->where('age', 0);
-                                });
+                        ->where(function (Builder $qq) use ($years) {
+                            $qq->where(function (Builder $dob) use ($years) {
+                                $dob->whereNotNull('date_of_birth')
+                                    ->whereRaw($years.' = 0');
+                            })->orWhere(function (Builder $q2) {
+                                $q2->whereNull('date_of_birth')->whereNotNull('age')->where('age', 0);
+                            });
                         });
                 });
             }
         }
 
         return $query;
+    }
+
+    /**
+     * أعمدة الأفراد اللازمة للعرض دون تحميل camp_id والطوابع الزمنية.
+     */
+    public static function constrainMemberListColumns($query): void
+    {
+        $query->select(self::MEMBER_LIST_COLUMNS);
     }
 
     public function scopeSocialStatus(Builder $query, ?string $status): Builder
@@ -189,6 +213,22 @@ class Family extends Model
         }
 
         return $query;
+    }
+
+    public function scopeWithProfileCompletenessCounts(Builder $query): Builder
+    {
+        return $query->withCount([
+            'members',
+            'members as incomplete_members_count' => function (Builder $q) {
+                $q->where(function (Builder $inner) {
+                    $inner->whereNull('name')
+                        ->orWhereRaw("trim(name) = ''")
+                        ->orWhereNull('relationship')
+                        ->orWhereRaw("trim(relationship) = ''")
+                        ->orWhereNull('age');
+                });
+            },
+        ]);
     }
 
     /**
@@ -229,10 +269,19 @@ class Family extends Model
      */
     public function profileComplete(): bool
     {
-        $this->loadMissing('members');
         $expected = (int) $this->total_members;
+        if ($expected < 1) {
+            return false;
+        }
+
+        if (isset($this->members_count, $this->incomplete_members_count)) {
+            return (int) $this->members_count === $expected
+                && (int) $this->incomplete_members_count === 0;
+        }
+
+        $this->loadMissing('members');
         $members = $this->members;
-        if ($expected < 1 || $members->count() !== $expected) {
+        if ($members->count() !== $expected) {
             return false;
         }
         foreach ($members as $m) {

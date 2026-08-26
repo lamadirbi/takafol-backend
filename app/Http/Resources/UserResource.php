@@ -19,9 +19,9 @@ class UserResource extends JsonResource
             'username' => $this->username,
             'login_serial' => User::defaultSerialFromId($this->id),
             'name' => $this->name,
-            'email' => $this->when($this->role === User::ROLE_ADMIN, $this->email),
+            'email' => $this->when($this->role === User::ROLE_ADMIN, fn () => $this->email),
             'role' => $this->role,
-            'camp_id' => $this->when($this->role === User::ROLE_ADMIN, $this->camp_id),
+            'camp_id' => $this->when($this->role === User::ROLE_ADMIN, fn () => $this->camp_id),
             'is_super' => (bool) $this->is_super,
             'is_primary_camp_admin' => $this->when(
                 $this->role === User::ROLE_ADMIN,

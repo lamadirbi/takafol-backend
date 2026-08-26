@@ -8,6 +8,7 @@ use App\Http\Resources\FamilyResource;
 use App\Models\Family;
 use App\Models\FamilyMember;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\App;
@@ -20,15 +21,26 @@ class FamilyController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $query = Family::queryForAdminFilters($request);
+        $withMembers = strtolower(trim((string) $request->input('filter_scope', 'family'))) === 'members';
+        $query = Family::queryForAdminFilters($request, $withMembers);
+
+        if (! $withMembers) {
+            $query->withProfileCompletenessCounts();
+        }
 
         if ($request->filled('search')) {
             $s = trim((string) $request->input('search', ''));
             if ($s !== '') {
                 $like = '%'.addcslashes($s, '%_\\').'%';
-                $query->where(function (\Illuminate\Database\Eloquent\Builder $q) use ($like) {
-                    $q->where('national_id', 'like', $like)
-                        ->orWhere('head_name', 'like', $like);
+                $query->where(function (Builder $q) use ($s, $like) {
+                    if (preg_match('/^\d+$/', $s) === 1) {
+                        $q->where('national_id', $s)
+                            ->orWhere('national_id', 'like', addcslashes($s, '%_\\').'%')
+                            ->orWhere('head_name', 'like', $like);
+                    } else {
+                        $q->where('national_id', 'like', $like)
+                            ->orWhere('head_name', 'like', $like);
+                    }
                 });
             }
         }
@@ -37,6 +49,14 @@ class FamilyController extends Controller
         $families = $query->orderBy('id')->paginate($perPage);
 
         return FamilyResource::collection($families)->response();
+    }
+
+    public function stats(): JsonResponse
+    {
+        return response()->json([
+            'families' => Family::query()->count(),
+            'members' => (int) Family::query()->sum('total_members'),
+        ]);
     }
 
     public function store(StoreFamilyRequest $request): JsonResponse
@@ -96,21 +116,21 @@ class FamilyController extends Controller
                 'total_members' => $data['total_members'],
             ]);
 
+            $createdCount = 0;
             if (! empty($data['members'])) {
-                foreach ($data['members'] as $member) {
-                    $family->members()->create([
-                        'name' => $member['name'],
-                        'date_of_birth' => $member['date_of_birth'] ?? null,
-                        'age' => $member['age'] ?? null,
-                        'relationship' => $member['relationship'] ?? null,
-                        'gender' => $member['gender'] ?? FamilyMember::GENDER_UNKNOWN,
-                    ]);
-                }
+                $created = $family->members()->createMany(array_map(static fn (array $member): array => [
+                    'name' => $member['name'],
+                    'date_of_birth' => $member['date_of_birth'] ?? null,
+                    'age' => $member['age'] ?? null,
+                    'relationship' => $member['relationship'] ?? null,
+                    'gender' => $member['gender'] ?? FamilyMember::GENDER_UNKNOWN,
+                ], $data['members']));
+                $createdCount = $created->count();
             }
 
-            $family->update(['total_members' => $family->members()->count()]);
+            $family->update(['total_members' => $createdCount]);
 
-            return $family->load(['user', 'members']);
+            return $family->load([Family::ADMIN_USER_EAGER, 'members']);
         });
 
         return (new FamilyResource($family))
@@ -120,7 +140,12 @@ class FamilyController extends Controller
 
     public function show(Family $family): FamilyResource
     {
-        $family->load(['user', 'members', 'distributions.packageType', 'distributions.campFilterRecord']);
+        $family->load([
+            Family::ADMIN_USER_EAGER,
+            'members' => Family::constrainMemberListColumns(...),
+            'distributions.packageType:id,name,description',
+            'distributions.campFilterRecord:id,name,created_at',
+        ]);
 
         return new FamilyResource($family);
     }
@@ -141,6 +166,7 @@ class FamilyController extends Controller
             'total_members' => ['sometimes', 'integer', 'min:0', 'max:65535'],
         ]);
 
+        $family->loadMissing('user');
         if (isset($validated['head_name'])) {
             $family->user?->update(['name' => $validated['head_name']]);
         }
@@ -154,6 +180,7 @@ class FamilyController extends Controller
     public function destroy(Family $family): JsonResponse
     {
         DB::transaction(function () use ($family) {
+            $family->loadMissing('user');
             $user = $family->user;
             $family->delete();
             $user?->delete();

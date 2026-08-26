@@ -11,7 +11,8 @@ class SiteSettingController extends Controller
 {
     public function show(): JsonResponse
     {
-        return response()->json(SiteSetting::allAsMap());
+        return response()->json(SiteSetting::allAsMap())
+            ->header('Cache-Control', 'private, max-age=30');
     }
 
     public function update(Request $request): JsonResponse

@@ -16,6 +16,13 @@ class TenantManager
         App::instance('current_camp', $camp);
     }
 
+    public function clear(): void
+    {
+        $this->currentCamp = null;
+        App::forgetInstance('current_camp_id');
+        App::forgetInstance('current_camp');
+    }
+
     public function getCamp(): ?Camp
     {
         return $this->currentCamp;
@@ -24,5 +31,14 @@ class TenantManager
     public function getCampId(): ?int
     {
         return $this->currentCamp?->id;
+    }
+
+    public function campForId(int $campId): ?Camp
+    {
+        if ($this->currentCamp && (int) $this->currentCamp->id === $campId) {
+            return $this->currentCamp;
+        }
+
+        return Camp::query()->find($campId);
     }
 }

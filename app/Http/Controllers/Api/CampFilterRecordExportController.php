@@ -6,10 +6,10 @@ use App\Http\Controllers\Controller;
 use App\Models\CampFilterRecord;
 use App\Models\Family;
 use Illuminate\Http\Request;
-use Symfony\Component\HttpFoundation\StreamedResponse;
 use OpenSpout\Common\Entity\Row;
 use OpenSpout\Writer\Common\Creator\WriterFactory;
 use OpenSpout\Writer\XLSX\Entity\SheetView;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class CampFilterRecordExportController extends Controller
 {
@@ -21,7 +21,7 @@ class CampFilterRecordExportController extends Controller
 
         $families = Family::query()
             ->whereIn('id', $idsFromSnap)
-            ->with(['user', 'members'])
+            ->with(['members' => Family::constrainMemberListColumns(...)])
             ->orderBy('id')
             ->get();
 
@@ -33,7 +33,7 @@ class CampFilterRecordExportController extends Controller
 
             // RTL + column widths for Arabic
             $sheet = $writer->getCurrentSheet();
-            $sheet->setSheetView((new SheetView())->setRightToLeft(true));
+            $sheet->setSheetView((new SheetView)->setRightToLeft(true));
             // Column widths (1-based). Adjust to make fields readable.
             $sheet->setColumnWidth(6, 1); // م
             $sheet->setColumnWidth(30, 2); // الإسم
@@ -106,7 +106,7 @@ class CampFilterRecordExportController extends Controller
 
         $families = Family::query()
             ->whereIn('id', $idsFromSnap)
-            ->with(['members'])
+            ->with(['members' => Family::constrainMemberListColumns(...)])
             ->orderBy('id')
             ->get();
 
@@ -117,7 +117,7 @@ class CampFilterRecordExportController extends Controller
             $writer->openToBrowser('export.xlsx');
 
             $sheet = $writer->getCurrentSheet();
-            $sheet->setSheetView((new SheetView())->setRightToLeft(true));
+            $sheet->setSheetView((new SheetView)->setRightToLeft(true));
             $sheet->setColumnWidth(35, 1);
             $sheet->setColumnWidth(35, 2);
 
@@ -151,4 +151,3 @@ class CampFilterRecordExportController extends Controller
         };
     }
 }
-

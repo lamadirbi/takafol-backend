@@ -2,8 +2,8 @@
 
 namespace App\Http\Middleware;
 
-use App\Models\Camp;
 use App\Models\User;
+use App\Services\TenantManager;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -25,9 +25,9 @@ class EnsureFamilyNotInGracePeriod
             return $next($request);
         }
 
-        $camp = Camp::query()->find($user->camp_id);
+        $camp = app(TenantManager::class)->campForId((int) $user->camp_id);
         if ($camp && $camp->familiesInGracePeriod()) {
-            $amount = (int) config('subscription.monthly_amount_ils', 15);
+            $amount = (int) config('subscription.monthly_amount_ils', 50);
 
             return response()->json([
                 'message' => 'اشتراك المخيم منتهٍ — فترة سماح: لا يمكن استخدام هذه الميزة حتى يُسدَّد '.$amount.' شيكل شهرياً وتُحدَّث الإدارة تاريخ الاشتراك.',

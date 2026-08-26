@@ -16,17 +16,22 @@ class AnnouncementController extends Controller
 {
     use ResolvesOptionalSanctumUser;
 
-    public function __construct(private readonly WebPushService $webPush)
-    {
-    }
+    public function __construct(private readonly WebPushService $webPush) {}
 
     public function index(Request $request): JsonResponse
     {
         $user = $this->resolveOptionalSanctumUser($request);
 
         $query = Announcement::query()
-            ->with(['adminUser', 'comments.user'])
+            ->with([
+                'adminUser:id,name,role,username,is_super,camp_id,email,national_id,created_at',
+                'comments' => fn ($q) => $q
+                    ->select('id', 'announcement_id', 'user_id', 'body', 'created_at')
+                    ->orderBy('id'),
+                'comments.user:id,name,role',
+            ])
             ->withCount([
+                'comments',
                 'reactions as reactions_like_count' => fn ($q) => $q->where('type', AnnouncementReaction::TYPE_LIKE),
                 'reactions as reactions_interested_count' => fn ($q) => $q->where('type', AnnouncementReaction::TYPE_INTERESTED),
                 'reactions as reactions_thanks_count' => fn ($q) => $q->where('type', AnnouncementReaction::TYPE_THANKS),
@@ -65,13 +70,19 @@ class AnnouncementController extends Controller
             'admin_user_id' => $request->user()->id,
             'published_at' => $data['published_at'] ?? now(),
         ]);
-        $announcement->load('adminUser');
+        $announcement->load([
+            'adminUser:id,name,role,username,is_super,camp_id,email,national_id,created_at',
+        ]);
 
         // إشعار Push لكل العائلات عند نشر خبر جديد.
-        $title = 'خبر جديد من ' . ($request->user()->name ?? 'إدارة المخيم');
+        $title = 'خبر جديد من '.($request->user()->name ?? 'إدارة المخيم');
         $body = (string) $announcement->title;
-        $url = '/news';
-        $this->webPush->notifyAllFamilyHeads($title, $body, $url, [
+        $camp = \Illuminate\Support\Facades\App::has('current_camp')
+            ? \Illuminate\Support\Facades\App::get('current_camp')
+            : $request->user()?->camp;
+        $slug = is_object($camp) ? (string) ($camp->slug ?? '') : '';
+        $url = $slug !== '' ? '/'.$slug.'/news#post-'.$announcement->id : '/news';
+        $this->webPush->notifyAllFamilyHeadsAfterResponse($title, $body, $url, [
             'type' => 'announcement',
             'announcement_id' => $announcement->id,
         ]);

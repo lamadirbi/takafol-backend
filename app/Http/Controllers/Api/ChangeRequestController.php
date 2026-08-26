@@ -14,9 +14,7 @@ use Illuminate\Support\Facades\DB;
 
 class ChangeRequestController extends Controller
 {
-    public function __construct(private readonly WebPushService $webPush)
-    {
-    }
+    public function __construct(private readonly WebPushService $webPush) {}
 
     /**
      * @return array<string, mixed>
@@ -61,7 +59,7 @@ class ChangeRequestController extends Controller
         $body = $isUpdate
             ? "{$head} — طلب #{$changeRequest->id} (محدّث)"
             : "{$head} — طلب #{$changeRequest->id} بانتظار المراجعة";
-        $this->webPush->notifyAllAdmins($title, $body, '/admin/change-requests', [
+        $this->webPush->notifyAllAdminsAfterResponse($title, $body, '/admin/change-requests', [
             'type' => 'change_request',
             'change_request_id' => $changeRequest->id,
             'family_id' => $family->id,
@@ -74,7 +72,7 @@ class ChangeRequestController extends Controller
     public function familyIndex(Request $request): JsonResponse
     {
         $user = $request->user();
-        $family = $user->family;
+        $family = $user->family()->first();
         if (! $family) {
             return response()->json(['data' => []]);
         }
@@ -103,7 +101,7 @@ class ChangeRequestController extends Controller
     public function familyStore(Request $request): JsonResponse
     {
         $user = $request->user();
-        $family = $user->family;
+        $family = $user->family()->first();
         if (! $family) {
             abort(403);
         }
@@ -128,7 +126,7 @@ class ChangeRequestController extends Controller
     public function familyUpdate(Request $request, ChangeRequest $changeRequest): JsonResponse
     {
         $user = $request->user();
-        $family = $user->family;
+        $family = $user->family()->first();
         if (! $family || $changeRequest->family_id !== $family->id) {
             abort(403);
         }
@@ -155,7 +153,9 @@ class ChangeRequestController extends Controller
     public function adminIndex(Request $request): JsonResponse
     {
         $status = $request->string('status')->toString();
-        $q = ChangeRequest::query()->with(['family', 'requester', 'reviewer'])->latest('id');
+        $q = ChangeRequest::query()
+            ->with(['family:id,head_name,national_id'])
+            ->latest('id');
         if ($status) {
             $q->where('status', $status);
         }
@@ -176,6 +176,7 @@ class ChangeRequestController extends Controller
 
         DB::transaction(function () use ($request, $changeRequest, $note) {
             $family = Family::query()->lockForUpdate()->findOrFail($changeRequest->family_id);
+            $family->loadMissing('user');
             $payload = is_array($changeRequest->payload) ? $changeRequest->payload : [];
 
             // تحديث بيانات العائلة
@@ -204,7 +205,9 @@ class ChangeRequestController extends Controller
             $deletes = is_array($members['delete'] ?? null) ? ($members['delete'] ?? []) : [];
 
             foreach ($adds as $m) {
-                if (! is_array($m)) continue;
+                if (! is_array($m)) {
+                    continue;
+                }
                 $family->members()->create([
                     'name' => (string) ($m['name'] ?? ''),
                     'relationship' => $m['relationship'] ?? null,
@@ -215,11 +218,17 @@ class ChangeRequestController extends Controller
             }
 
             foreach ($updates as $m) {
-                if (! is_array($m)) continue;
+                if (! is_array($m)) {
+                    continue;
+                }
                 $id = (int) ($m['id'] ?? 0);
-                if (! $id) continue;
+                if (! $id) {
+                    continue;
+                }
                 $member = $family->members()->where('id', $id)->first();
-                if (! $member) continue;
+                if (! $member) {
+                    continue;
+                }
                 $patch = array_intersect_key($m, array_flip(['name', 'relationship', 'gender', 'date_of_birth']));
                 if (array_key_exists('date_of_birth', $patch) && ($patch['date_of_birth'] === '' || $patch['date_of_birth'] === null)) {
                     $patch['date_of_birth'] = null;
@@ -273,4 +282,3 @@ class ChangeRequestController extends Controller
         return (new ChangeRequestResource($changeRequest->fresh()))->response();
     }
 }
-

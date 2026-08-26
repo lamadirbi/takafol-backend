@@ -11,7 +11,7 @@ return [
     'grace_days_after_expiry' => (int) env('SUBSCRIPTION_GRACE_DAYS', 0),
 
     /** قيمة الاشتراك الشهري (عرض فقط في الواجهة) */
-    'monthly_amount_ils' => (int) env('SUBSCRIPTION_MONTHLY_AMOUNT_ILS', 15),
+    'monthly_amount_ils' => (int) env('SUBSCRIPTION_MONTHLY_AMOUNT_ILS', 50),
 
     /** مدة التجربة المجانية عند إنشاء المخيم لأول مرة (بالأيام) */
     'trial_days' => (int) env('SUBSCRIPTION_TRIAL_DAYS', 14),
