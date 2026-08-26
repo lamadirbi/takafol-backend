@@ -4,6 +4,7 @@ export COMPOSER_ALLOW_SUPERUSER=1
 export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
 
 ROOT=/www/wwwroot/takafol/backend
+git config --global --add safe.directory "$ROOT" 2>/dev/null || true
 cd "$ROOT"
 
 git fetch origin main
