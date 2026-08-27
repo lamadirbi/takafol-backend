@@ -143,6 +143,14 @@ class InstantPushTest extends TestCase
             ->assertJsonPath('installed', true)
             ->assertJsonPath('linked', false);
 
+        Http::fake([
+            'https://ntfy.sh' => Http::response(['id' => 'ok'], 200),
+            'https://ntfy.sh/*' => Http::response(['id' => 'ok'], 200),
+        ]);
+        $this->postJson('/api/push/instant-channel/test', $body, $headers)
+            ->assertOk()
+            ->assertJsonPath('sent', true);
+
         $linked = $this->postJson('/api/push/instant-channel/link', $body, $headers)
             ->assertOk()
             ->assertJsonPath('linked', true);

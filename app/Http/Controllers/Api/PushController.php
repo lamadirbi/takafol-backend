@@ -93,14 +93,6 @@ class PushController extends Controller
                 'message' => 'أكّد تثبيت تطبيق ntfy أولاً على هذا الجهاز.',
             ], 409);
         }
-        if (! $channel['linked']) {
-            return response()->json([
-                ...$channel,
-                'sent' => false,
-                'ntfy' => false,
-                'message' => 'اربط هذا الجهاز بتطبيق ntfy أولاً.',
-            ], 409);
-        }
 
         $clickPath = '/family/notifications';
         if ($user->isSuper() && $user->camp_id === null) {
@@ -118,8 +110,10 @@ class PushController extends Controller
         $ok = $this->instantPush->publish(
             $channel['topic'],
             'تَكافل',
-            'هذا إشعار تجريبي من تطبيق ntfy.',
-            $click
+            'هذا إشعار تجريبي من تطبيق ntfy. إذا وصلك، يعني التطبيق سمح بالإشعارات.',
+            $click,
+            [],
+            5
         );
 
         return response()->json([

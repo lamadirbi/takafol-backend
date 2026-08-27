@@ -232,7 +232,7 @@ class InstantPushService
     /**
      * @param  array<string, mixed>  $data
      */
-    public function publish(string $topic, string $title, string $body, ?string $url = null, array $data = []): bool
+    public function publish(string $topic, string $title, string $body, ?string $url = null, array $data = [], int $priority = 4): bool
     {
         if (! $this->enabled() || $topic === '') {
             return false;
@@ -243,6 +243,7 @@ class InstantPushService
             'title' => $title,
             'message' => $body,
             'tags' => ['bell'],
+            'priority' => max(1, min(5, $priority)),
         ];
         $click = $this->normalizeAbsoluteUrl($url);
         if ($click) {
