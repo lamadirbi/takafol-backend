@@ -27,9 +27,10 @@ class InstantPushTest extends TestCase
         ['user' => $user, 'serial' => $serial] = $this->makeFamilyWithHead($camp);
         $token = $this->loginFamily($user, $serial, $camp);
 
-        $res = $this->getJson('/api/push/instant-channel', $this->campHeaders($camp, $token))
+        $res = $this->getJson('/api/push/instant-channel?device_key=phone-one', $this->campHeaders($camp, $token))
             ->assertOk()
-            ->assertJsonPath('linked', false);
+            ->assertJsonPath('linked', false)
+            ->assertJsonPath('installed', false);
 
         $topic = $res->json('topic');
         $intent = (string) $res->json('android_intent');
@@ -39,9 +40,10 @@ class InstantPushTest extends TestCase
         $this->assertStringContainsString('package=io.heckel.ntfy', $intent);
         $this->assertStringContainsString('play.google.com', $intent);
         $this->assertStringNotContainsString('scheme=https', $intent);
-        $this->assertDatabaseHas('users', [
-            'id' => $user->id,
-            'ntfy_topic' => $topic,
+        $this->assertDatabaseHas('ntfy_devices', [
+            'user_id' => $user->id,
+            'device_key' => 'phone-one',
+            'topic' => $topic,
         ]);
     }
 
@@ -129,21 +131,82 @@ class InstantPushTest extends TestCase
         $camp = $this->makeCamp();
         ['user' => $user, 'serial' => $serial] = $this->makeFamilyWithHead($camp);
         $token = $this->loginFamily($user, $serial, $camp);
+        $headers = $this->campHeaders($camp, $token);
+        $body = ['device_key' => 'phone-one'];
 
-        $linked = $this->postJson('/api/push/instant-channel/link', [], $this->campHeaders($camp, $token))
+        $this->postJson('/api/push/instant-channel/link', $body, $headers)
+            ->assertStatus(409);
+
+        $this->postJson('/api/push/instant-channel/installed', $body, $headers)
+            ->assertOk()
+            ->assertJsonPath('installed', true)
+            ->assertJsonPath('linked', false);
+
+        $linked = $this->postJson('/api/push/instant-channel/link', $body, $headers)
             ->assertOk()
             ->assertJsonPath('linked', true);
 
         $oldTopic = $linked->json('topic');
         $this->assertNotEmpty($oldTopic);
-        $this->assertNotNull($user->fresh()->ntfy_linked_at);
+        $this->assertDatabaseHas('ntfy_devices', [
+            'user_id' => $user->id,
+            'device_key' => 'phone-one',
+            'topic' => $oldTopic,
+        ]);
 
-        $unlinked = $this->postJson('/api/push/instant-channel/unlink', [], $this->campHeaders($camp, $token))
+        $unlinked = $this->postJson('/api/push/instant-channel/unlink', $body, $headers)
             ->assertOk()
             ->assertJsonPath('linked', false);
 
         $this->assertNotSame($oldTopic, $unlinked->json('topic'));
-        $this->assertNull($user->fresh()->ntfy_linked_at);
+        $this->assertDatabaseMissing('ntfy_devices', [
+            'user_id' => $user->id,
+            'device_key' => 'phone-one',
+            'topic' => $oldTopic,
+        ]);
+    }
+
+    public function test_same_account_links_each_device_separately(): void
+    {
+        Http::fake([
+            'https://ntfy.sh' => Http::response(['id' => 'ok'], 200),
+            'https://ntfy.sh/*' => Http::response(['id' => 'ok'], 200),
+        ]);
+
+        $camp = $this->makeCamp();
+        ['user' => $user] = $this->makeFamilyWithHead($camp);
+        $push = app(InstantPushService::class);
+        $first = $push->markLinked($user, 'phone-aaa');
+        $second = $push->markLinked($user, 'phone-bbb');
+        $this->assertNotSame($first['topic'], $second['topic']);
+
+        app(WebPushService::class)->notifyUser(
+            $user,
+            'طرد بانتظارك',
+            'يوجد طرد جديد',
+            '/family/notifications',
+            ['type' => 'distribution_pending']
+        );
+
+        Http::assertSent(fn ($request) => ($request->data()['topic'] ?? null) === $first['topic']);
+        Http::assertSent(fn ($request) => ($request->data()['topic'] ?? null) === $second['topic']);
+
+        $push->unlink($user, 'phone-aaa');
+        Http::fake([
+            'https://ntfy.sh' => Http::response(['id' => 'ok'], 200),
+            'https://ntfy.sh/*' => Http::response(['id' => 'ok'], 200),
+        ]);
+
+        app(WebPushService::class)->notifyUser(
+            $user,
+            'طرد بانتظارك',
+            'يوجد طرد جديد',
+            '/family/notifications',
+            ['type' => 'distribution_pending']
+        );
+
+        Http::assertSent(fn ($request) => ($request->data()['topic'] ?? null) === $second['topic']);
+        Http::assertNotSent(fn ($request) => ($request->data()['topic'] ?? null) === $first['topic']);
     }
 
     public function test_public_key_reports_enabled_flag(): void
@@ -202,11 +265,16 @@ class InstantPushTest extends TestCase
         $super = $this->makeGlobalSuper();
         $token = $this->loginSuper($super);
 
-        $this->postJson('/api/push/instant-channel/link', [], $this->superHeaders($token))
+        $this->postJson('/api/push/instant-channel/installed', ['device_key' => 'phone-one'], $this->superHeaders($token))
+            ->assertOk();
+        $this->postJson('/api/push/instant-channel/link', ['device_key' => 'phone-one'], $this->superHeaders($token))
             ->assertOk()
             ->assertJsonPath('linked', true);
 
-        $this->assertNotNull($super->fresh()->ntfy_linked_at);
+        $this->assertDatabaseHas('ntfy_devices', [
+            'user_id' => $super->id,
+            'device_key' => 'phone-one',
+        ]);
     }
 
     public function test_camp_registration_notifies_linked_super_admin(): void

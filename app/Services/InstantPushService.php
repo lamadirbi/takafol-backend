@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\NtfyDevice;
 use App\Models\User;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -28,63 +29,58 @@ class InstantPushService
         ];
     }
 
-    public function channelFor(User $user): array
+    public function channelFor(User $user, string $deviceKey, ?string $userAgent = null): array
     {
-        $topic = $this->ensureTopic($user);
-        $info = $this->appInfo();
-        $host = $info['host'];
-        $deep = 'ntfy://'.$host.'/'.$topic;
-        $play = (string) $info['play_store_url'];
-        $androidIntent = 'intent://'.$host.'/'.$topic
-            .'#Intent;scheme=ntfy;package=io.heckel.ntfy;S.browser_fallback_url='
-            .rawurlencode($play)
-            .';end';
+        $device = $this->deviceFor($user, $deviceKey, $userAgent);
 
-        return [
-            ...$info,
-            'topic' => $topic,
-            'linked' => $user->ntfy_linked_at !== null,
-            'subscribe_url' => $deep,
-            'deep_link' => $deep,
-            'android_intent' => $androidIntent,
-        ];
+        return $this->channelPayload($user, $device);
     }
 
-    public function markLinked(User $user): array
+    public function confirmInstalled(User $user, string $deviceKey, ?string $userAgent = null): array
     {
-        $this->ensureTopic($user);
-        if ($user->ntfy_linked_at === null) {
-            $user->ntfy_linked_at = now();
-            $user->save();
+        $device = $this->deviceFor($user, $deviceKey, $userAgent);
+        if ($device->installed_at === null) {
+            $device->installed_at = now();
+            $device->save();
         }
 
-        return $this->channelFor($user->fresh() ?? $user);
+        return $this->channelPayload($user, $device);
     }
 
-    public function unlink(User $user): array
+    public function markLinked(User $user, string $deviceKey = 'test-device', ?string $userAgent = null, bool $requireInstalled = false): array
     {
-        $user->ntfy_topic = null;
-        $user->ntfy_linked_at = null;
-        $user->save();
-
-        return $this->channelFor($user->fresh() ?? $user);
-    }
-
-    public function ensureTopic(User $user): string
-    {
-        $existing = trim((string) $user->ntfy_topic);
-        if ($existing !== '') {
-            return $existing;
+        $device = $this->deviceFor($user, $deviceKey, $userAgent);
+        if ($requireInstalled && $device->installed_at === null) {
+            return [
+                ...$this->channelPayload($user, $device),
+                'error' => 'install_required',
+            ];
         }
+        if ($device->installed_at === null) {
+            $device->installed_at = now();
+        }
+        if ($device->linked_at === null) {
+            $device->linked_at = now();
+        }
+        $device->save();
+        $this->forgetLegacyUserChannel($user);
 
-        do {
-            $topic = 'takafol'.Str::lower(bin2hex(random_bytes(12)));
-        } while (User::withoutGlobalScopes()->where('ntfy_topic', $topic)->exists());
+        return $this->channelPayload($user, $device);
+    }
 
-        $user->ntfy_topic = $topic;
-        $user->save();
+    public function unlink(User $user, string $deviceKey = 'test-device'): array
+    {
+        $device = $this->deviceFor($user, $deviceKey);
+        $device->linked_at = null;
+        $device->topic = $this->freshTopic();
+        $device->save();
 
-        return $topic;
+        return $this->channelPayload($user, $device);
+    }
+
+    public function ensureTopic(User $user, string $deviceKey = 'test-device'): string
+    {
+        return $this->deviceFor($user, $deviceKey)->topic;
     }
 
     /**
@@ -105,11 +101,37 @@ class InstantPushService
         $users = User::withoutGlobalScopes()
             ->with('camp:id,slug')
             ->whereIn('id', $ids)
-            ->whereNotNull('ntfy_topic')
-            ->whereNotNull('ntfy_linked_at')
-            ->get(['id', 'ntfy_topic', 'camp_id', 'role', 'is_super']);
+            ->get(['id', 'ntfy_topic', 'ntfy_linked_at', 'camp_id', 'role', 'is_super'])
+            ->keyBy('id');
+
+        $linkedUserIds = [];
+        $devices = NtfyDevice::query()
+            ->whereIn('user_id', $ids)
+            ->whereNotNull('linked_at')
+            ->whereNotNull('topic')
+            ->get(['user_id', 'topic']);
+
+        foreach ($devices as $device) {
+            $user = $users->get((int) $device->user_id);
+            if (! $user) {
+                continue;
+            }
+            $topic = trim((string) $device->topic);
+            if ($topic === '') {
+                continue;
+            }
+            $linkedUserIds[(int) $user->id] = true;
+            $click = $this->destinationUrl($url, $data, $user->camp?->slug, $user);
+            $this->publish($topic, $title, $body, $click, $data);
+        }
 
         foreach ($users as $user) {
+            if (isset($linkedUserIds[(int) $user->id])) {
+                continue;
+            }
+            if ($user->ntfy_linked_at === null) {
+                continue;
+            }
             $topic = trim((string) $user->ntfy_topic);
             if ($topic === '') {
                 continue;
@@ -117,6 +139,95 @@ class InstantPushService
             $click = $this->destinationUrl($url, $data, $user->camp?->slug, $user);
             $this->publish($topic, $title, $body, $click, $data);
         }
+    }
+
+    private function deviceFor(User $user, string $deviceKey, ?string $userAgent = null): NtfyDevice
+    {
+        $key = $this->normalizeDeviceKey($deviceKey);
+        $device = NtfyDevice::query()
+            ->where('user_id', $user->id)
+            ->where('device_key', $key)
+            ->first();
+
+        if ($device) {
+            if ($userAgent && $device->user_agent !== $userAgent) {
+                $device->user_agent = mb_substr($userAgent, 0, 255);
+                $device->save();
+            }
+
+            return $device;
+        }
+
+        $device = new NtfyDevice([
+            'user_id' => $user->id,
+            'device_key' => $key,
+            'topic' => $this->freshTopic(),
+            'user_agent' => $userAgent ? mb_substr($userAgent, 0, 255) : null,
+        ]);
+        $device->save();
+
+        return $device;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function channelPayload(User $user, NtfyDevice $device): array
+    {
+        $info = $this->appInfo();
+        $host = $info['host'];
+        $topic = trim((string) $device->topic);
+        $deep = $topic !== '' ? 'ntfy://'.$host.'/'.$topic : '';
+        $play = (string) $info['play_store_url'];
+        $androidIntent = $topic !== ''
+            ? 'intent://'.$host.'/'.$topic
+                .'#Intent;scheme=ntfy;package=io.heckel.ntfy;S.browser_fallback_url='
+                .rawurlencode($play)
+                .';end'
+            : '';
+
+        return [
+            ...$info,
+            'device_key' => $device->device_key,
+            'topic' => $topic,
+            'installed' => $device->installed_at !== null,
+            'linked' => $device->linked_at !== null,
+            'subscribe_url' => $deep,
+            'deep_link' => $deep,
+            'android_intent' => $androidIntent,
+        ];
+    }
+
+    private function forgetLegacyUserChannel(User $user): void
+    {
+        if ($user->ntfy_linked_at === null && trim((string) $user->ntfy_topic) === '') {
+            return;
+        }
+        $user->ntfy_topic = null;
+        $user->ntfy_linked_at = null;
+        $user->save();
+    }
+
+    private function freshTopic(): string
+    {
+        do {
+            $topic = 'takafol'.Str::lower(bin2hex(random_bytes(12)));
+        } while (
+            NtfyDevice::query()->where('topic', $topic)->exists()
+            || User::withoutGlobalScopes()->where('ntfy_topic', $topic)->exists()
+        );
+
+        return $topic;
+    }
+
+    public function normalizeDeviceKey(string $deviceKey): string
+    {
+        $key = trim($deviceKey);
+        if (strlen($key) < 8) {
+            throw new \InvalidArgumentException('device_key');
+        }
+
+        return mb_substr($key, 0, 80);
     }
 
     /**

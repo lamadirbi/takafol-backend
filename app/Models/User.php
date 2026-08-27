@@ -91,6 +91,11 @@ class User extends Authenticatable
         return $this->hasMany(PushSubscription::class);
     }
 
+    public function ntfyDevices(): HasMany
+    {
+        return $this->hasMany(NtfyDevice::class);
+    }
+
     public function isSuper(): bool
     {
         return (bool) $this->is_super;
