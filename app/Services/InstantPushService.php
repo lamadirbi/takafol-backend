@@ -24,6 +24,9 @@ class InstantPushService
             'app_name' => 'ntfy',
             'play_store_url' => (string) config('ntfy.play_store_url'),
             'app_store_url' => (string) config('ntfy.app_store_url'),
+            'android_install_intent' => 'intent://details?id=io.heckel.ntfy#Intent;scheme=market;package=com.android.vending;S.browser_fallback_url='
+                .rawurlencode((string) config('ntfy.play_store_url'))
+                .';end',
             'host' => $host,
             'base_url' => $base,
         ];
@@ -178,12 +181,8 @@ class InstantPushService
         $host = $info['host'];
         $topic = trim((string) $device->topic);
         $deep = $topic !== '' ? 'ntfy://'.$host.'/'.$topic : '';
-        $play = (string) $info['play_store_url'];
         $androidIntent = $topic !== ''
-            ? 'intent://'.$host.'/'.$topic
-                .'#Intent;scheme=ntfy;package=io.heckel.ntfy;S.browser_fallback_url='
-                .rawurlencode($play)
-                .';end'
+            ? 'intent://'.$host.'/'.$topic.'#Intent;scheme=ntfy;package=io.heckel.ntfy;end'
             : '';
 
         return [

@@ -38,8 +38,9 @@ class InstantPushTest extends TestCase
         $this->assertStringStartsWith('ntfy://', (string) $res->json('deep_link'));
         $this->assertStringContainsString('scheme=ntfy', $intent);
         $this->assertStringContainsString('package=io.heckel.ntfy', $intent);
-        $this->assertStringContainsString('play.google.com', $intent);
+        $this->assertStringNotContainsString('browser_fallback_url', $intent);
         $this->assertStringNotContainsString('scheme=https', $intent);
+        $this->assertStringContainsString('play.google.com', (string) $res->json('play_store_url'));
         $this->assertDatabaseHas('ntfy_devices', [
             'user_id' => $user->id,
             'device_key' => 'phone-one',
