@@ -353,7 +353,7 @@ class FamilyFormSchema
         $byHeader = [];
         foreach ($header as $i => $raw) {
             $label = $this->normalizeHeader((string) $raw);
-            if ($label === '') {
+            if ($label === '' || array_key_exists($label, $byHeader)) {
                 continue;
             }
             $byHeader[$label] = $cells[$i] ?? null;
@@ -366,7 +366,7 @@ class FamilyFormSchema
         }
 
         $headName = trim((string) ($values['head_name'] ?? ''));
-        $nid = trim((string) ($values['national_id'] ?? ''));
+        $nid = $this->stringifyIdentity($values['national_id'] ?? null);
         if ($headName === '' || $nid === '' || $nid === '0') {
             return null;
         }
@@ -415,8 +415,7 @@ class FamilyFormSchema
 
         $fields = [];
         $usedCatalog = [];
-        foreach ($rawHeaders as $raw) {
-            $label = $this->normalizeHeader((string) $raw);
+        foreach ($this->canonicalizeExcelHeaders($rawHeaders) as $label) {
             if ($label === '') {
                 continue;
             }
@@ -493,6 +492,64 @@ class FamilyFormSchema
         }
 
         return null;
+    }
+
+    /**
+     * صف العناوين الحقيقي غالباً مش الصف الأول: ملفات المخيم بتحط اسم المخيم فوق.
+     *
+     * @param  list<mixed>  $cells
+     */
+    public function rowLooksLikeHeader(array $cells): bool
+    {
+        $hasName = false;
+        $hasId = false;
+        foreach ($this->canonicalizeExcelHeaders($cells) as $label) {
+            $key = $this->matchCatalogKey($label);
+            if ($key === 'head_name') {
+                $hasName = true;
+            }
+            if ($key === 'national_id') {
+                $hasId = true;
+            }
+        }
+
+        return $hasName && $hasId;
+    }
+
+    /**
+     * @param  list<mixed>  $rawHeaders
+     * @return list<string>
+     */
+    public function canonicalizeExcelHeaders(array $rawHeaders): array
+    {
+        $out = [];
+        $seen = [];
+        $sawSpouseName = false;
+        foreach ($rawHeaders as $raw) {
+            $label = $this->normalizeHeader($this->stringifyHeaderCell($raw));
+            if ($label === '' || $this->isIgnorableHeader($label)) {
+                $out[] = '';
+
+                continue;
+            }
+            $key = $this->matchCatalogKey($label);
+            if ($key === 'national_id' && isset($seen['national_id']) && $sawSpouseName && ! isset($seen['spouse_national_id'])) {
+                $label = 'رقم هوية الزوجة';
+                $key = 'spouse_national_id';
+            } elseif ($key && isset($seen[$key])) {
+                $label .= ' (2)';
+                $key = null;
+            }
+            if ($key) {
+                $seen[$key] = true;
+                if ($key === 'spouse_name') {
+                    $sawSpouseName = true;
+                }
+            }
+            $out[] = $label;
+        }
+
+        return $out;
     }
 
     /**
@@ -605,20 +662,48 @@ class FamilyFormSchema
     private function headerAliases(string $key): array
     {
         return match ($key) {
-            'head_name' => ['الإسم', 'الاسم', 'اسم رب الأسرة', 'اسم رب الاسره', 'الاسم الرباعي', 'اسم العائلة', 'اسم'],
+            'head_name' => ['الإسم', 'الاسم', 'اسم رب الأسرة', 'اسم رب الاسره', 'الاسم الرباعي', 'الاسم رباعي', 'اسم رباعي', 'اسم العائلة', 'الاسم الرباعى'],
             'national_id' => ['رقم الهوية', 'رقم هوية رب الأسرة', 'رقم هوية رب الاسره', 'الهوية', 'رقم هوية'],
             'head_gender' => ['الجنس', 'جنس رب الأسرة'],
             'date_of_birth' => ['تاريخ الميلاد', 'تاريخ الولادة'],
             'social_status' => ['الحالة الاجتماعية', 'الحاله الاجتماعيه'],
             'spouse_name' => ['اسم الزوجة رباعي', 'اسم الزوجة', 'اسم الزوج', 'اسم الزوج/الزوجة'],
             'spouse_national_id' => ['رقم هوية الزوجة', 'رقم هوية الزوج', 'هوية الزوجة'],
-            'total_members' => ["عدد افراد\nالاسرة الكلي", 'عدد افراد الاسرة الكلي', 'عدد أفراد الأسرة', 'عدد الافراد'],
+            'total_members' => ["عدد افراد\nالاسرة الكلي", 'عدد افراد الاسرة الكلي', 'عدد أفراد الأسرة', 'عدد افراد الاسرة', 'عدد أفراد الاسرة', 'عدد الافراد'],
             'phone' => ['رقم الموبايل', 'الجوال', 'الهاتف', 'رقم الجوال', 'موبايل'],
             'financial_status' => ['الوضع المادي', 'الوضع المالي'],
             'original_governorate' => ['العنوان الأصلي- المحافظة', 'المحافظة الأصلية', 'المحافظة', 'المحافظه'],
             'original_neighborhood' => ['العنوان الأصلي- الحي', 'الحي الأصلي', 'الحي'],
             default => [],
         };
+    }
+
+    private function isIgnorableHeader(string $label): bool
+    {
+        $normalized = mb_strtolower($this->normalizeHeader($label));
+
+        return in_array($normalized, ['#', 'م', 'م.', 'no', 'n', 'الرقم'], true);
+    }
+
+    private function stringifyHeaderCell(mixed $value): string
+    {
+        if ($value instanceof \DateTimeInterface || is_array($value)) {
+            return '';
+        }
+
+        return trim((string) $value);
+    }
+
+    private function stringifyIdentity(mixed $value): string
+    {
+        if ($value instanceof \DateTimeInterface || is_array($value)) {
+            return '';
+        }
+        if (is_int($value) || is_float($value)) {
+            return (string) (int) $value;
+        }
+
+        return trim((string) ($value ?? ''));
     }
 
     private function normalizeHeader(string $raw): string

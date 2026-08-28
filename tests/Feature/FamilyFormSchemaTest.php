@@ -177,4 +177,85 @@ class FamilyFormSchemaTest extends TestCase
 
         @unlink($path);
     }
+
+    public function test_import_skips_title_row_and_reads_camp_sheet_headers(): void
+    {
+        $camp = $this->makeCamp();
+        $admin = $this->makeCampAdmin($camp);
+        $token = $this->loginAdmin($admin, $camp);
+        $schema = app(FamilyFormSchema::class);
+
+        $this->assertFalse($schema->rowLooksLikeHeader(['اسم المخيم:', '', 'طيبة', 'العنوان:', 'شارع القبة']));
+        $this->assertTrue($schema->rowLooksLikeHeader([
+            '#',
+            'الاسم رباعي ',
+            'رقم الهوية',
+            'اسم الزوجة رباعي ',
+            'رقم الهوية ',
+            'رقم الجوال',
+            'عدد افراد الاسرة ',
+        ]));
+
+        $headers = $schema->canonicalizeExcelHeaders([
+            '#',
+            'الاسم رباعي ',
+            'رقم الهوية',
+            'اسم الزوجة رباعي ',
+            'رقم الهوية ',
+            'رقم الجوال',
+            'عدد افراد الاسرة ',
+        ]);
+        $this->assertSame('رقم هوية الزوجة', $headers[4]);
+
+        $path = sys_get_temp_dir().DIRECTORY_SEPARATOR.uniqid('camp_sheet_', true).'.xlsx';
+        $writer = \OpenSpout\Writer\Common\Creator\WriterFactory::createFromFile($path);
+        $writer->openToFile($path);
+        $writer->addRow(\OpenSpout\Common\Entity\Row::fromValues(['اسم المخيم:', '', 'طيبة', '', '', '', 'العنوان:', '', 'شارع القبة']));
+        $writer->addRow(\OpenSpout\Common\Entity\Row::fromValues([
+            '#',
+            'الاسم رباعي ',
+            'رقم الهوية',
+            'اسم الزوجة رباعي ',
+            'رقم الهوية ',
+            'رقم الجوال',
+            'عدد افراد الاسرة ',
+            'تاريخ الاستلام ',
+            'التوقيع',
+        ]));
+        $writer->addRow(\OpenSpout\Common\Entity\Row::fromValues([
+            1,
+            'ابتسام احمد محمد',
+            913821955,
+            'جمال علي حسن',
+            923257430,
+            599615025,
+            2,
+            '',
+            '',
+        ]));
+        $writer->close();
+
+        $file = new \Illuminate\Http\UploadedFile(
+            $path,
+            'camp.xlsx',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            null,
+            true
+        );
+
+        $res = $this->post('/api/admin/import/families-excel', [
+            'file' => $file,
+        ], $this->campHeaders($camp, $token))->assertOk();
+
+        $this->assertSame(1, $res->json('created'));
+        $this->assertSame(0, $res->json('skipped'));
+
+        $family = Family::query()->where('national_id', '913821955')->first();
+        $this->assertSame('ابتسام احمد محمد', $family?->head_name);
+        $this->assertSame('جمال علي حسن', $family?->spouse_name);
+        $this->assertSame('923257430', (string) $family?->spouse_national_id);
+        $this->assertSame(2, $family?->total_members);
+
+        @unlink($path);
+    }
 }

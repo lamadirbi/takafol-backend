@@ -102,8 +102,11 @@ class ExcelImportController extends Controller
                         $cells[] = $cell->getValue();
                     }
 
-                    if ($rowIndex === 1) {
-                        $header = array_map(fn ($v) => trim((string) $v), $cells);
+                    if ($header === null) {
+                        if (! $schema->rowLooksLikeHeader($cells)) {
+                            continue;
+                        }
+                        $header = $schema->canonicalizeExcelHeaders($cells);
                         if ($camp) {
                             $schema->applyAdoptedConfig($camp, $header);
                             $camp = $camp->fresh();
@@ -212,6 +215,16 @@ class ExcelImportController extends Controller
         });
 
         $reader->close();
+
+        if ($header === null) {
+            return response()->json([
+                'created' => 0,
+                'updated' => 0,
+                'skipped' => 0,
+                'adopted_headers' => [],
+                'message' => 'ما قدرنا نلاقي صف العناوين في الملف. لازم يكون فيه عمود للاسم وعمود لرقم الهوية.',
+            ], 422);
+        }
 
         return response()->json([
             'created' => $created,
