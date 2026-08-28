@@ -59,6 +59,44 @@ class SuperAdminAndSubscriptionScenariosTest extends TestCase
         $this->assertDatabaseMissing('camps', ['name' => 'مخيم الأمل']);
     }
 
+    public function test_sup02b_super_reviews_platform_contact_messages_camp_admin_cannot(): void
+    {
+        $super = $this->makeGlobalSuper();
+        $token = $this->loginSuper($super);
+        $camp = $this->makeCamp();
+        $admin = $this->makeCampAdmin($camp);
+        $adminToken = $this->loginAdmin($admin, $camp);
+
+        $created = $this->postJson('/api/platform-contact-messages', [
+            'name' => 'خالد',
+            'whatsapp_phone' => '0591112233',
+            'kind' => 'inquiry',
+            'message' => 'كيف نضيف مسؤولاً ثانياً؟',
+        ])->assertCreated();
+
+        $this->getJson('/api/admin/platform-contact-messages', $this->campHeaders($camp, $adminToken))
+            ->assertForbidden();
+
+        $list = $this->getJson('/api/admin/platform-contact-messages', $this->superHeaders($token))->assertOk();
+        $id = $list->json('data.0.id');
+        $this->assertNotNull($id);
+        $this->assertSame($created->json('id'), $id);
+
+        $this->patchJson('/api/admin/platform-contact-messages/'.$id, [
+            'status' => 'in_progress',
+            'admin_note' => 'سيتم الرد اليوم',
+        ], $this->superHeaders($token))
+            ->assertOk()
+            ->assertJsonPath('status', 'in_progress')
+            ->assertJsonPath('admin_note', 'سيتم الرد اليوم');
+
+        $this->patchJson('/api/admin/platform-contact-messages/'.$id, [
+            'status' => 'closed',
+        ], $this->superHeaders($token))
+            ->assertOk()
+            ->assertJsonPath('status', 'closed');
+    }
+
     public function test_sup03_renewal_approve_extends_subscription(): void
     {
         Storage::fake('public');

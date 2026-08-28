@@ -180,6 +180,31 @@ class User extends Authenticatable
     }
 
     /**
+     * تعديل مسؤول: المسؤول الرئيسي لنفس المخيم، أو السوبر العام، أو صاحب الحساب نفسه.
+     */
+    public function canUpdateCampAdmin(User $target): bool
+    {
+        if (! $this->isAdmin() || ! $target->isAdmin()) {
+            return false;
+        }
+        if ($this->isSuper() && $this->camp_id === null) {
+            return true;
+        }
+        if ($this->camp_id === null || $target->camp_id === null) {
+            return false;
+        }
+        if ((int) $this->camp_id !== (int) $target->camp_id) {
+            return false;
+        }
+        if ((int) $this->id === (int) $target->id) {
+            return true;
+        }
+
+        return $this->isPrimaryCampAdmin();
+    }
+
+
+    /**
      * الرقم التسلسلي للدخول: 3 أرقام (id مع أصفار يساراً حتى 3 خانات).
      * أمثلة: 2 => 002، 10 => 010، 100 => 100
      */

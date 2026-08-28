@@ -19,6 +19,7 @@ use App\Http\Controllers\Api\FamilyFormSchemaController;
 use App\Http\Controllers\Api\FamilyMemberController;
 use App\Http\Controllers\Api\FamilyPortalController;
 use App\Http\Controllers\Api\PackageTypeController;
+use App\Http\Controllers\Api\PlatformContactMessageController;
 use App\Http\Controllers\Api\PushController;
 use App\Http\Controllers\Api\SiteSettingController;
 use App\Http\Controllers\Api\SubscriptionRenewalRequestController;
@@ -28,6 +29,7 @@ use Illuminate\Support\Facades\Route;
 Route::get('/camps', [CampController::class, 'index']);
 Route::get('/camps/{slug}', [CampController::class, 'show']);
 Route::post('/camp-registration-requests', [CampRegistrationRequestController::class, 'store']);
+Route::post('/platform-contact-messages', [PlatformContactMessageController::class, 'store'])->middleware('throttle:8,1');
 Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:login');
 Route::post('/admin/login', [AuthController::class, 'adminLogin'])->middleware('throttle:login');
 Route::get('/announcements', [AnnouncementController::class, 'index']);
@@ -72,7 +74,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::delete('/admin/camps/{camp}', [CampController::class, 'destroy']);
         Route::get('/admin/camp-registration-requests', [CampRegistrationRequestController::class, 'adminIndex']);
         Route::patch('/admin/camp-registration-requests/{campRegistrationRequest}', [CampRegistrationRequestController::class, 'adminUpdate']);
+        Route::get('/admin/platform-contact-messages', [PlatformContactMessageController::class, 'adminIndex']);
+        Route::patch('/admin/platform-contact-messages/{platformContactMessage}', [PlatformContactMessageController::class, 'adminUpdate']);
         Route::get('/admin/dashboard-stats', [FamilyController::class, 'stats']);
+        Route::get('/admin/filter-readiness', [FamilyController::class, 'filterReadiness']);
         Route::apiResource('admin/families', FamilyController::class);
         Route::get('/admin/family-form-schema', [FamilyFormSchemaController::class, 'show']);
         Route::put('/admin/family-form-schema', [FamilyFormSchemaController::class, 'update']);
@@ -113,7 +118,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/admin/change-requests', [ChangeRequestController::class, 'adminIndex']);
         Route::post('/admin/change-requests/{changeRequest}/approve', [ChangeRequestController::class, 'adminApprove']);
         Route::post('/admin/change-requests/{changeRequest}/reject', [ChangeRequestController::class, 'adminReject']);
-        Route::apiResource('admin/users', AdminUserController::class)->only(['index', 'store', 'destroy']);
+        Route::apiResource('admin/users', AdminUserController::class)->only(['index', 'store', 'update', 'destroy']);
 
         // Super Admin (Global) - renewal requests review
         Route::get('/admin/subscription-renewal-requests', [SubscriptionRenewalRequestController::class, 'superIndex']);

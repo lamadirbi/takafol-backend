@@ -60,6 +60,50 @@ class FamilyController extends Controller
         ]);
     }
 
+    /**
+     * جاهزية معايير الفلترة حسب حقول المخيم (ملف الاستيراد) وامتلاء البيانات.
+     */
+    public function filterReadiness(FamilyFormSchema $schema): JsonResponse
+    {
+        $enabled = array_values(array_map(
+            static fn (array $field): string => (string) $field['key'],
+            $schema->enabledFields()
+        ));
+
+        $families = Family::query()->count();
+        $members = FamilyMember::query()->count();
+
+        return response()->json([
+            'enabled_keys' => $enabled,
+            'families' => $families,
+            'members' => $members,
+            'filled' => [
+                'social_status' => Family::query()
+                    ->whereNotNull('social_status')
+                    ->where('social_status', '!=', '')
+                    ->count(),
+                'total_members' => Family::query()->where('total_members', '>', 0)->count(),
+                'member_age' => FamilyMember::query()
+                    ->where(function (Builder $q) {
+                        $q->whereNotNull('date_of_birth')->orWhereNotNull('age');
+                    })
+                    ->count(),
+                'member_gender' => FamilyMember::query()
+                    ->whereNotNull('gender')
+                    ->whereNotIn('gender', ['', FamilyMember::GENDER_UNKNOWN])
+                    ->count(),
+                'member_relationship' => FamilyMember::query()
+                    ->whereNotNull('relationship')
+                    ->where('relationship', '!=', '')
+                    ->count(),
+                'children' => FamilyMember::query()
+                    ->whereIn('relationship', ['ابن', 'ابنة'])
+                    ->count(),
+            ],
+        ]);
+    }
+
+
     public function store(StoreFamilyRequest $request): JsonResponse
     {
         $data = $request->validated();

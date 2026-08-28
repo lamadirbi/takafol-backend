@@ -11,6 +11,8 @@ class FamilyFormSchema
 {
     public const LOCKED_KEYS = ['national_id', 'head_name'];
 
+    public const EXTRA_MEMBER_SLOTS = 6;
+
     /**
      * @return list<array<string, mixed>>
      */
@@ -392,7 +394,86 @@ class FamilyFormSchema
             'original_neighborhood' => $extracted['columns']['original_neighborhood'] ?? null,
             'file_status' => null,
             'extra_data' => $extracted['extra_data'],
+            'spouse_date_of_birth' => $this->parseExcelDate(
+                $byHeader['تاريخ ميلاد الزوج/الزوجة'] ?? $byHeader['تاريخ ميلاد الزوجة'] ?? null
+            ),
+            'extra_members' => $this->mapExtraMembersFromCells($byHeader),
         ];
+    }
+
+    /**
+     * أعمدة النموذج التي تغطي كل معايير الفلترة (أسرة + أفراد).
+     *
+     * @return list<string>
+     */
+    public static function filterTemplateHeaders(): array
+    {
+        $headers = [
+            'الإسم',
+            'رقم الهوية',
+            'الجنس',
+            'تاريخ الميلاد',
+            'الحالة الاجتماعية',
+            'اسم الزوجة رباعي',
+            'رقم هوية الزوجة',
+            'تاريخ ميلاد الزوج/الزوجة',
+            'رقم الموبايل',
+            'عدد افراد الاسرة الكلي',
+            'العنوان الأصلي- المحافظة',
+            'العنوان الأصلي- الحي',
+        ];
+
+        for ($i = 1; $i <= self::EXTRA_MEMBER_SLOTS; $i++) {
+            $headers[] = "اسم الفرد {$i}";
+            $headers[] = "صلة القرابة {$i}";
+            $headers[] = "جنس الفرد {$i}";
+            $headers[] = "تاريخ ميلاد الفرد {$i}";
+        }
+
+        return $headers;
+    }
+
+    /**
+     * عناوين التحميل: معايير الفلترة دائماً، ثم أي حقل مفعّل في المخيم غير مكرر.
+     *
+     * @return list<string>
+     */
+    public function templateHeaders(?Camp $camp = null): array
+    {
+        $base = self::filterTemplateHeaders();
+        $seen = [];
+        foreach ($base as $header) {
+            $seen[$this->headerIdentity($header)] = true;
+        }
+
+        $out = $base;
+        foreach ($this->excelHeaders($camp) as $header) {
+            $header = trim((string) $header);
+            if ($header === '' || $this->isMemberSlotHeader($header) || $this->isIgnorableHeader($header)) {
+                continue;
+            }
+            $id = $this->headerIdentity($header);
+            if (isset($seen[$id])) {
+                continue;
+            }
+            $seen[$id] = true;
+            $out[] = $header;
+        }
+
+        return $out;
+    }
+
+    public function isMemberSlotHeader(string $label): bool
+    {
+        $normalized = $this->normalizeHeader($label);
+        if (in_array($normalized, ['تاريخ ميلاد الزوج/الزوجة', 'تاريخ ميلاد الزوجة', 'تاريخ ميلاد الزوج'], true)) {
+            return true;
+        }
+
+        return (bool) preg_match(
+            '/^(اسم الفرد|صلة القرابة|صلة القرابه|جنس الفرد|تاريخ ميلاد الفرد)\s*\d+$/u',
+            $normalized
+        );
     }
 
     /**
@@ -416,7 +497,7 @@ class FamilyFormSchema
         $fields = [];
         $usedCatalog = [];
         foreach ($this->canonicalizeExcelHeaders($rawHeaders) as $label) {
-            if ($label === '') {
+            if ($label === '' || $this->isMemberSlotHeader($label)) {
                 continue;
             }
             $catalogKey = $this->matchCatalogKey($label);
@@ -659,6 +740,88 @@ class FamilyFormSchema
     /**
      * @return list<string>
      */
+    /**
+     * @param  array<string, mixed>  $byHeader
+     * @return list<array{name: string, relationship: string, gender: string, date_of_birth: ?string}>
+     */
+    private function mapExtraMembersFromCells(array $byHeader): array
+    {
+        $members = [];
+        for ($i = 1; $i <= self::EXTRA_MEMBER_SLOTS; $i++) {
+            $name = $this->blankToNull(
+                $byHeader["اسم الفرد {$i}"] ?? $byHeader["اسم الفرد{$i}"] ?? null
+            );
+            if (! is_string($name) || $name === '') {
+                continue;
+            }
+            $rel = $this->parseRelationship(
+                $byHeader["صلة القرابة {$i}"] ?? $byHeader["صلة القرابه {$i}"] ?? null
+            );
+            if ($rel === 'رب الأسرة') {
+                continue;
+            }
+            $members[] = [
+                'name' => $name,
+                'relationship' => $rel ?: 'أخرى',
+                'gender' => $this->parseGender($byHeader["جنس الفرد {$i}"] ?? $byHeader["الجنس {$i}"] ?? null),
+                'date_of_birth' => $this->parseExcelDate(
+                    $byHeader["تاريخ ميلاد الفرد {$i}"] ?? $byHeader["تاريخ الميلاد {$i}"] ?? null
+                ),
+            ];
+        }
+
+        return $members;
+    }
+
+    public function parseExcelDate(mixed $value): ?string
+    {
+        if ($value instanceof \DateTimeInterface) {
+            return $value->format('Y-m-d');
+        }
+        if (is_array($value) && isset($value['date'])) {
+            try {
+                return (new \DateTimeImmutable((string) $value['date']))->format('Y-m-d');
+            } catch (\Throwable) {
+                return null;
+            }
+        }
+        $s = trim((string) ($value ?? ''));
+        if ($s === '' || $s === '-' || $s === '—') {
+            return null;
+        }
+        try {
+            return (new \DateTimeImmutable($s))->format('Y-m-d');
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function parseRelationship(mixed $value): ?string
+    {
+        $s = trim((string) ($value ?? ''));
+        if ($s === '' || $s === '-' || $s === '—') {
+            return null;
+        }
+        if (in_array($s, FamilyMember::allowedRelationships(), true)) {
+            return $s;
+        }
+
+        return match ($s) {
+            'بنت' => 'ابنة',
+            'ولد', 'ابن/ة' => 'ابن',
+            'الزوجة' => 'زوجة',
+            'الزوج' => 'زوج',
+            default => 'أخرى',
+        };
+    }
+
+    private function headerIdentity(string $header): string
+    {
+        $key = $this->matchCatalogKey($header);
+
+        return $key ?? $this->normalizeHeader($header);
+    }
+
     private function headerAliases(string $key): array
     {
         return match ($key) {

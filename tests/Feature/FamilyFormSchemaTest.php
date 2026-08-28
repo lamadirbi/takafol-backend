@@ -259,7 +259,7 @@ class FamilyFormSchemaTest extends TestCase
         @unlink($path);
     }
 
-    public function test_excel_template_matches_camp_sheet_and_has_no_family_data(): void
+    public function test_excel_template_includes_filter_columns_and_has_no_family_data(): void
     {
         $camp = $this->makeCamp(['name' => 'مخيم تجريبي']);
         $admin = $this->makeCampAdmin($camp);
@@ -284,9 +284,72 @@ class FamilyFormSchemaTest extends TestCase
 
         $this->assertStringContainsString('اسم المخيم', $xml);
         $this->assertStringContainsString('مخيم تجريبي', $xml);
-        $this->assertStringContainsString('الاسم رباعي', $xml);
         $this->assertStringContainsString('رقم الهوية', $xml);
+        $this->assertStringContainsString('الحالة الاجتماعية', $xml);
+        $this->assertStringContainsString('عدد افراد الاسرة الكلي', $xml);
+        $this->assertStringContainsString('تاريخ الميلاد', $xml);
+        $this->assertStringContainsString('صلة القرابة 1', $xml);
+        $this->assertStringContainsString('اسم الفرد 1', $xml);
+        $this->assertStringContainsString('جنس الفرد 1', $xml);
         $this->assertStringNotContainsString('ابتسام', $xml);
         $this->assertStringNotContainsString('913821955', $xml);
+    }
+
+    public function test_import_saves_extra_members_from_filter_template_columns(): void
+    {
+        $camp = $this->makeCamp();
+        $admin = $this->makeCampAdmin($camp);
+        $token = $this->loginAdmin($admin, $camp);
+
+        $headers = FamilyFormSchema::filterTemplateHeaders();
+        $row = array_fill(0, count($headers), '');
+        $index = array_flip($headers);
+        $row[$index['الإسم']] = 'أحمد علي';
+        $row[$index['رقم الهوية']] = '401234567';
+        $row[$index['الجنس']] = 'ذكر';
+        $row[$index['تاريخ الميلاد']] = '1980-01-01';
+        $row[$index['الحالة الاجتماعية']] = 'متزوج';
+        $row[$index['اسم الزوجة رباعي']] = 'سارة محمود';
+        $row[$index['رقم هوية الزوجة']] = '401234568';
+        $row[$index['عدد افراد الاسرة الكلي']] = 4;
+        $row[$index['اسم الفرد 1']] = 'يوسف أحمد';
+        $row[$index['صلة القرابة 1']] = 'ابن';
+        $row[$index['جنس الفرد 1']] = 'ذكر';
+        $row[$index['تاريخ ميلاد الفرد 1']] = '2026-01-15';
+        $row[$index['اسم الفرد 2']] = 'ليان أحمد';
+        $row[$index['صلة القرابة 2']] = 'ابنة';
+        $row[$index['جنس الفرد 2']] = 'أنثى';
+        $row[$index['تاريخ ميلاد الفرد 2']] = '2018-06-01';
+
+        $path = sys_get_temp_dir().DIRECTORY_SEPARATOR.uniqid('filter_tpl_', true).'.xlsx';
+        $writer = \OpenSpout\Writer\Common\Creator\WriterFactory::createFromFile($path);
+        $writer->openToFile($path);
+        $writer->addRow(\OpenSpout\Common\Entity\Row::fromValues(['اسم المخيم:', 'مخيم تجريبي']));
+        $writer->addRow(\OpenSpout\Common\Entity\Row::fromValues($headers));
+        $writer->addRow(\OpenSpout\Common\Entity\Row::fromValues($row));
+        $writer->close();
+
+        $file = new \Illuminate\Http\UploadedFile(
+            $path,
+            'families.xlsx',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            null,
+            true
+        );
+
+        $this->post('/api/admin/import/families-excel', [
+            'file' => $file,
+        ], $this->campHeaders($camp, $token))->assertOk()->assertJsonPath('created', 1);
+
+        $family = Family::query()->where('national_id', '401234567')->first();
+        $this->assertNotNull($family);
+        $this->assertSame('married', $family->social_status);
+        $this->assertSame(4, $family->total_members);
+        $this->assertTrue($family->members()->where('relationship', 'ابن')->where('name', 'يوسف أحمد')->exists());
+        $this->assertTrue($family->members()->where('relationship', 'ابنة')->where('name', 'ليان أحمد')->exists());
+        $child = $family->members()->where('name', 'يوسف أحمد')->first();
+        $this->assertSame('2026-01-15', optional($child?->date_of_birth)->toDateString());
+
+        @unlink($path);
     }
 }

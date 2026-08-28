@@ -422,11 +422,96 @@ class FamilyAndAdminScenariosTest extends TestCase
             'name' => 'مسؤول مساعد',
             'username' => 'helper-admin',
             'password' => 'secret12',
-        ], $this->campHeaders($camp, $token))->assertCreated();
+        ], $this->campHeaders($camp, $token))
+            ->assertCreated()
+            ->assertJsonPath('data.username', 'helper-admin')
+            ->assertJsonPath('data.plain_password', 'secret12');
 
         $this->getJson('/api/admin/users', $this->campHeaders($camp, $token))
             ->assertOk()
             ->assertJsonFragment(['username' => 'helper-admin']);
+    }
+
+    public function test_adm09b_primary_admin_can_update_secondary_credentials(): void
+    {
+        $camp = $this->makeCamp();
+        $admin = $this->makeCampAdmin($camp);
+        $token = $this->loginAdmin($admin, $camp);
+        $headers = $this->campHeaders($camp, $token);
+
+        $created = $this->postJson('/api/admin/users', [
+            'name' => 'مسؤول مساعد',
+            'username' => 'helper-admin',
+            'password' => 'secret12',
+        ], $headers)->assertCreated()->json('data');
+
+        $this->patchJson('/api/admin/users/'.$created['id'], [
+            'name' => 'مساعد محدّث',
+            'username' => 'helper-two',
+            'password' => 'newpass99',
+        ], $headers)
+            ->assertOk()
+            ->assertJsonPath('data.name', 'مساعد محدّث')
+            ->assertJsonPath('data.username', 'helper-two')
+            ->assertJsonPath('data.plain_password', 'newpass99');
+
+        $this->postJson('/api/admin/login', [
+            'username' => 'helper-two',
+            'password' => 'newpass99',
+        ], $this->campHeaders($camp))
+            ->assertOk()
+            ->assertJsonPath('user.username', 'helper-two');
+    }
+
+    public function test_adm09c_secondary_admin_cannot_update_another_admin(): void
+    {
+        $camp = $this->makeCamp();
+        $admin = $this->makeCampAdmin($camp);
+        $token = $this->loginAdmin($admin, $camp);
+        $headers = $this->campHeaders($camp, $token);
+
+        $secondary = $this->postJson('/api/admin/users', [
+            'name' => 'مسؤول مساعد',
+            'username' => 'helper-admin',
+            'password' => 'secret12',
+        ], $headers)->assertCreated()->json('data');
+
+        $other = $this->postJson('/api/admin/users', [
+            'name' => 'مسؤول ثالث',
+            'username' => 'helper-three',
+            'password' => 'secret13',
+        ], $headers)->assertCreated()->json('data');
+
+        $helperToken = $this->postJson('/api/admin/login', [
+            'username' => 'helper-admin',
+            'password' => 'secret12',
+        ], $this->campHeaders($camp))->assertOk()->json('token');
+
+        $this->patchJson('/api/admin/users/'.$other['id'], [
+            'name' => 'اختراق',
+        ], $this->campHeaders($camp, $helperToken))->assertForbidden();
+
+        $this->patchJson('/api/admin/users/'.$secondary['id'], [
+            'name' => 'مساعد نفسه',
+        ], $this->campHeaders($camp, $helperToken))
+            ->assertOk()
+            ->assertJsonPath('data.name', 'مساعد نفسه');
+    }
+
+    public function test_adm09d_primary_admin_gets_generated_password_when_omitted(): void
+    {
+        $camp = $this->makeCamp();
+        $admin = $this->makeCampAdmin($camp);
+        $token = $this->loginAdmin($admin, $camp);
+
+        $created = $this->postJson('/api/admin/users', [
+            'name' => 'مسؤول مساعد',
+            'username' => 'helper-auto',
+        ], $this->campHeaders($camp, $token))->assertCreated();
+
+        $plain = $created->json('data.plain_password');
+        $this->assertIsString($plain);
+        $this->assertGreaterThanOrEqual(6, strlen($plain));
     }
 
     public function test_adm10_camp_admin_can_upload_and_remove_logo(): void

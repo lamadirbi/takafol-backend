@@ -7,6 +7,7 @@ use App\Http\Resources\UserResource;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class AdminUserController extends Controller
 {
@@ -43,7 +44,7 @@ class AdminUserController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'username' => ['required', 'string', 'max:64', 'unique:users,username'],
             'email' => ['nullable', 'email', 'max:255', 'unique:users,email'],
-            'password' => ['required', 'string', 'min:6'],
+            'password' => ['nullable', 'string', 'min:6'],
             'is_super' => ['boolean'],
             'camp_id' => ['nullable', 'integer', 'exists:camps,id'],
         ]);
@@ -56,20 +57,69 @@ class AdminUserController extends Controller
             $campId = (int) $creator->camp_id;
         }
 
+        $plainPassword = trim((string) ($validated['password'] ?? ''));
+        if ($plainPassword === '') {
+            $plainPassword = $this->makeReadablePassword();
+        }
+
+        $makeSuper = false;
+        if ($creator->isSuper() && $creator->camp_id === null) {
+            $makeSuper = (bool) ($validated['is_super'] ?? false);
+        }
+
         $user = User::query()->create([
             'national_id' => 'ADMIN_'.time().'_'.rand(100, 999),
             'name' => $validated['name'],
             'username' => $validated['username'],
             'email' => $validated['email'] ?? null,
-            'password' => $validated['password'],
+            'password' => $plainPassword,
             'role' => User::ROLE_ADMIN,
-            'is_super' => $validated['is_super'] ?? false,
+            'is_super' => $makeSuper,
             'camp_id' => $campId,
         ]);
 
-        return (new UserResource($user))
-            ->response()
-            ->setStatusCode(201);
+        return $this->credentialsResponse($user, $plainPassword, 201);
+    }
+
+    public function update(Request $request, User $user): JsonResponse
+    {
+        $actor = $request->user();
+        if (! $actor->canUpdateCampAdmin($user)) {
+            return response()->json(['message' => 'غير مصرح لك بتعديل هذا المسؤول.'], 403);
+        }
+
+        if ($user->role !== User::ROLE_ADMIN) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $validated = $request->validate([
+            'name' => ['sometimes', 'required', 'string', 'max:255'],
+            'username' => ['sometimes', 'required', 'string', 'max:64', Rule::unique('users', 'username')->ignore($user->id)],
+            'email' => ['nullable', 'email', 'max:255', Rule::unique('users', 'email')->ignore($user->id)],
+            'password' => ['nullable', 'string', 'min:6'],
+        ]);
+
+        $plainPassword = null;
+        if (array_key_exists('password', $validated)) {
+            $candidate = trim((string) ($validated['password'] ?? ''));
+            if ($candidate !== '') {
+                $plainPassword = $candidate;
+                $user->password = $plainPassword;
+            }
+        }
+
+        if (isset($validated['name'])) {
+            $user->name = $validated['name'];
+        }
+        if (isset($validated['username'])) {
+            $user->username = $validated['username'];
+        }
+        if (array_key_exists('email', $validated)) {
+            $user->email = $validated['email'] ?: null;
+        }
+        $user->save();
+
+        return $this->credentialsResponse($user->fresh()->load('camp:id,primary_admin_user_id'), $plainPassword, 200);
     }
 
     public function destroy(User $user): JsonResponse
@@ -101,5 +151,27 @@ class AdminUserController extends Controller
         $user->delete();
 
         return response()->json(null, 204);
+    }
+
+    private function credentialsResponse(User $user, ?string $plainPassword, int $status): JsonResponse
+    {
+        $payload = (new UserResource($user))->resolve();
+        if ($plainPassword !== null && $plainPassword !== '') {
+            $payload['plain_password'] = $plainPassword;
+        }
+
+        return response()->json(['data' => $payload], $status);
+    }
+
+    private function makeReadablePassword(): string
+    {
+        $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+        $out = '';
+        $max = strlen($alphabet) - 1;
+        for ($i = 0; $i < 8; $i++) {
+            $out .= $alphabet[random_int(0, $max)];
+        }
+
+        return $out;
     }
 }

@@ -66,9 +66,7 @@ class ExcelImportController extends Controller
     {
         $camp = App::has('current_camp') ? App::get('current_camp') : null;
         $camp = $camp instanceof Camp ? $camp : null;
-        $stored = is_array($camp?->family_form_config) ? $camp->family_form_config : [];
-        $hasSavedFields = is_array($stored['fields'] ?? null) && $stored['fields'] !== [];
-        $headers = $hasSavedFields ? $schema->excelHeaders($camp) : self::sampleCampSheetHeaders();
+        $headers = $schema->templateHeaders($camp);
         $campName = trim((string) ($camp?->name ?? ''));
 
         $title = [
@@ -87,7 +85,10 @@ class ExcelImportController extends Controller
         }
         $title = array_slice($title, 0, max(count($headers), 9));
 
-        return response()->streamDownload(function () use ($headers, $title) {
+        $notes = array_fill(0, count($headers), '');
+        $notes[0] = 'للفلترة عبّوا: الحالة الاجتماعية وعدد الأفراد. لفلترة العمر والمواليد والجنس وصلة القرابة عبّوا تاريخ الميلاد والجنس لكل فرد، وباقي الأفراد في أعمدة فرد 1 إلى فرد 6 (ابن / ابنة / …).';
+
+        return response()->streamDownload(function () use ($headers, $title, $notes) {
             $path = sys_get_temp_dir().DIRECTORY_SEPARATOR.uniqid('families_template_', true).'.xlsx';
             $writer = WriterFactory::createFromFile($path);
             $writer->openToFile($path);
@@ -100,6 +101,7 @@ class ExcelImportController extends Controller
             }
 
             $writer->addRow(Row::fromValues($title));
+            $writer->addRow(Row::fromValues($notes));
             $writer->addRow(Row::fromValues($headers));
             $writer->addRow(Row::fromValues(array_fill(0, count($headers), '')));
             $writer->close();
@@ -249,6 +251,7 @@ class ExcelImportController extends Controller
 
                     $this->upsertHeadMember($family, $mapped);
                     $this->upsertSpouseMember($family, $mapped);
+                    $this->upsertExtraMembers($family, is_array($mapped['extra_members'] ?? null) ? $mapped['extra_members'] : []);
                 }
                 break;
             }
@@ -437,13 +440,43 @@ class ExcelImportController extends Controller
             'name' => (string) $spouseName,
             'relationship' => $rel,
             'gender' => $gender,
-            'date_of_birth' => null,
+            'date_of_birth' => $mapped['spouse_date_of_birth'] ?? null,
             'age' => null,
         ];
         if ($spouse) {
             $spouse->update($payload);
         } else {
             $family->members()->create($payload);
+        }
+    }
+
+    /**
+     * @param  list<array{name: string, relationship: string, gender: string, date_of_birth: ?string}>  $members
+     */
+    private function upsertExtraMembers(Family $family, array $members): void
+    {
+        foreach ($members as $member) {
+            $name = trim((string) ($member['name'] ?? ''));
+            $rel = trim((string) ($member['relationship'] ?? ''));
+            if ($name === '' || $rel === '' || $rel === 'رب الأسرة') {
+                continue;
+            }
+            $existing = $family->members()
+                ->where('name', $name)
+                ->where('relationship', $rel)
+                ->first();
+            $payload = [
+                'name' => $name,
+                'relationship' => $rel,
+                'gender' => $member['gender'] ?? FamilyMember::GENDER_UNKNOWN,
+                'date_of_birth' => $member['date_of_birth'] ?? null,
+                'age' => null,
+            ];
+            if ($existing) {
+                $existing->update($payload);
+            } else {
+                $family->members()->create($payload);
+            }
         }
     }
 }

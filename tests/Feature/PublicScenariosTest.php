@@ -67,6 +67,32 @@ class PublicScenariosTest extends TestCase
         $this->getJson('/api/push/public-key')->assertOk()->assertJsonStructure(['public_key']);
     }
 
+    public function test_pub07_submits_platform_contact_message(): void
+    {
+        $this->postJson('/api/platform-contact-messages', [
+            'name' => 'سارة',
+            'whatsapp_phone' => '0592533678',
+            'camp_name' => 'مخيم طيبة',
+            'kind' => 'platform_change',
+            'message' => 'نحتاج عموداً جديداً في سجل العائلات.',
+        ])
+            ->assertCreated()
+            ->assertJsonPath('message', 'تم استلام رسالتكم. الإدارة العليا تراجع الطلبات وتتواصل عبر واتساب عند الحاجة.');
+
+        $this->assertDatabaseHas('platform_contact_messages', [
+            'name' => 'سارة',
+            'kind' => 'platform_change',
+            'status' => 'pending',
+        ]);
+    }
+
+    public function test_pub08_rejects_incomplete_platform_contact_message(): void
+    {
+        $this->postJson('/api/platform-contact-messages', [
+            'name' => 'سارة',
+        ])->assertStatus(422);
+    }
+
     public function test_pub06_unknown_camp_slug_does_not_crash_public_lists(): void
     {
         $this->getJson('/api/announcements', [

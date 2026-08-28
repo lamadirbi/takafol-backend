@@ -313,6 +313,34 @@ class InstantPushTest extends TestCase
         });
     }
 
+    public function test_platform_contact_notifies_linked_super_admin(): void
+    {
+        Http::fake([
+            'https://ntfy.sh' => Http::response(['id' => 'ok'], 200),
+            'https://ntfy.sh/*' => Http::response(['id' => 'ok'], 200),
+        ]);
+
+        $super = $this->makeGlobalSuper();
+        $topic = app(InstantPushService::class)->ensureTopic($super);
+        app(InstantPushService::class)->markLinked($super);
+
+        $this->postJson('/api/platform-contact-messages', [
+            'name' => 'سارة',
+            'whatsapp_phone' => '0592533678',
+            'kind' => 'inquiry',
+            'message' => 'كيف نبدأ؟',
+        ])->assertCreated();
+
+        Http::assertSent(function ($request) use ($topic) {
+            $data = $request->data();
+            $click = (string) ($data['click'] ?? '');
+
+            return ($data['topic'] ?? null) === $topic
+                && ($data['title'] ?? null) === 'استفسار جديد'
+                && str_contains($click, '/super-admin/contact');
+        });
+    }
+
     public function test_renewal_request_notifies_linked_super_admin(): void
     {
         Http::fake([
