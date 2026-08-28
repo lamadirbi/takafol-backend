@@ -12,7 +12,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 use OpenSpout\Common\Entity\Row;
 use OpenSpout\Reader\Common\Creator\ReaderFactory;
 use OpenSpout\Writer\Common\Creator\WriterFactory;
@@ -70,6 +69,7 @@ class ExcelImportController extends Controller
         // استيراد Excel قد يستغرق وقتاً، خصوصاً مع تشفير كلمات المرور
         @ini_set('max_execution_time', '0');
         @set_time_limit(0);
+        ignore_user_abort(true);
 
         $request->validate([
             'file' => ['required', 'file'],
@@ -136,16 +136,7 @@ class ExcelImportController extends Controller
                         ->first();
 
                     if (! $user) {
-                        $user = User::query()->create([
-                            'national_id' => $nationalId,
-                            'name' => $mapped['head_name'],
-                            'email' => null,
-                            'password' => 'init',
-                            'role' => User::ROLE_FAMILY_HEAD,
-                        ]);
-                        $serial = User::defaultSerialFromId((int) $user->id);
-                        $user->password = $serial;
-                        $user->save();
+                        $user = $this->createFamilyHeadUser($nationalId, $mapped['head_name'], $currentCampId);
                     } else {
                         $familyOtherCamp = Family::withoutGlobalScopes()
                             ->where('user_id', $user->id)
@@ -157,10 +148,6 @@ class ExcelImportController extends Controller
                             continue;
                         }
                         $user->name = $mapped['head_name'];
-                        if (! $user->password || ! Hash::check(User::defaultSerialFromId((int) $user->id), $user->password)) {
-                            $serial = User::defaultSerialFromId((int) $user->id);
-                            $user->password = $serial;
-                        }
                         $user->save();
                     }
 
@@ -232,6 +219,28 @@ class ExcelImportController extends Controller
             'skipped' => $skipped,
             'adopted_headers' => $adoptedHeaders,
         ]);
+    }
+
+    private function createFamilyHeadUser(string $nationalId, string $headName, ?int $campId): User
+    {
+        $now = now();
+        $id = DB::table('users')->insertGetId([
+            'national_id' => $nationalId,
+            'name' => $headName,
+            'email' => null,
+            'password' => '',
+            'role' => User::ROLE_FAMILY_HEAD,
+            'is_super' => false,
+            'camp_id' => $campId,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        $user = User::withoutGlobalScopes()->findOrFail($id);
+        $user->password = User::defaultSerialFromId((int) $user->id);
+        $user->save();
+
+        return $user;
     }
 
     /**
