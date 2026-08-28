@@ -8,6 +8,7 @@ use App\Http\Resources\FamilyResource;
 use App\Models\Family;
 use App\Models\FamilyMember;
 use App\Models\User;
+use App\Services\FamilyFormSchema;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -100,32 +101,52 @@ class FamilyController extends Controller
             }
 
             $familyNationalId = $data['family_national_id'] ?? $data['national_id'];
+            $extracted = app(FamilyFormSchema::class)->extractFamilyAttributes($data);
+            $columns = $extracted['columns'];
+            $extra = $extracted['extra_data'];
 
             $family = Family::query()->create([
                 'user_id' => $user->id,
                 'head_name' => $data['head_name'],
-                'head_gender' => $data['head_gender'] ?? null,
+                'head_gender' => $columns['head_gender'] ?? ($data['head_gender'] ?? null),
                 'national_id' => $familyNationalId,
-                'phone' => $data['phone'] ?? null,
-                'social_status' => $data['social_status'] ?? null,
-                'financial_status' => $data['financial_status'] ?? null,
-                'spouse_name' => $data['spouse_name'] ?? null,
-                'spouse_national_id' => $data['spouse_national_id'] ?? null,
-                'original_governorate' => $data['original_governorate'] ?? null,
-                'original_neighborhood' => $data['original_neighborhood'] ?? null,
-                'total_members' => $data['total_members'],
+                'phone' => $columns['phone'] ?? ($data['phone'] ?? null),
+                'social_status' => $columns['social_status'] ?? ($data['social_status'] ?? null),
+                'financial_status' => $columns['financial_status'] ?? ($data['financial_status'] ?? null),
+                'spouse_name' => $columns['spouse_name'] ?? ($data['spouse_name'] ?? null),
+                'spouse_national_id' => $columns['spouse_national_id'] ?? ($data['spouse_national_id'] ?? null),
+                'original_governorate' => $columns['original_governorate'] ?? ($data['original_governorate'] ?? null),
+                'original_neighborhood' => $columns['original_neighborhood'] ?? ($data['original_neighborhood'] ?? null),
+                'total_members' => $columns['total_members'] ?? ($data['total_members'] ?? 0),
+                'extra_data' => $extra !== [] ? $extra : null,
             ]);
 
             $createdCount = 0;
             if (! empty($data['members'])) {
+                $members = $data['members'];
+                if ($extracted['has_date_of_birth'] && isset($members[0]) && is_array($members[0])) {
+                    $members[0]['date_of_birth'] = $members[0]['date_of_birth'] ?? $extracted['date_of_birth'];
+                    if (empty($members[0]['gender']) && ! empty($columns['head_gender'])) {
+                        $members[0]['gender'] = $columns['head_gender'];
+                    }
+                }
                 $created = $family->members()->createMany(array_map(static fn (array $member): array => [
                     'name' => $member['name'],
                     'date_of_birth' => $member['date_of_birth'] ?? null,
                     'age' => $member['age'] ?? null,
                     'relationship' => $member['relationship'] ?? null,
                     'gender' => $member['gender'] ?? FamilyMember::GENDER_UNKNOWN,
-                ], $data['members']));
+                ], $members));
                 $createdCount = $created->count();
+            } elseif ($extracted['has_date_of_birth'] || ! empty($data['head_name'])) {
+                $family->members()->create([
+                    'name' => $data['head_name'],
+                    'relationship' => 'رب الأسرة',
+                    'gender' => $columns['head_gender'] ?? FamilyMember::GENDER_UNKNOWN,
+                    'date_of_birth' => $extracted['date_of_birth'],
+                    'age' => null,
+                ]);
+                $createdCount = 1;
             }
 
             $family->update(['total_members' => $createdCount]);
@@ -164,14 +185,56 @@ class FamilyController extends Controller
             'original_governorate' => ['nullable', 'string', 'max:64'],
             'original_neighborhood' => ['nullable', 'string', 'max:64'],
             'total_members' => ['sometimes', 'integer', 'min:0', 'max:65535'],
+            'date_of_birth' => ['nullable', 'date'],
+            'extra_data' => ['nullable', 'array'],
         ]);
 
-        $family->loadMissing('user');
-        if (isset($validated['head_name'])) {
-            $family->user?->update(['name' => $validated['head_name']]);
+        $extracted = app(FamilyFormSchema::class)->extractFamilyAttributes($validated);
+        $patch = array_intersect_key($validated, array_flip([
+            'head_name',
+            'head_gender',
+            'national_id',
+            'phone',
+            'social_status',
+            'financial_status',
+            'spouse_name',
+            'spouse_national_id',
+            'original_governorate',
+            'original_neighborhood',
+            'total_members',
+        ]));
+        foreach ($extracted['columns'] as $key => $value) {
+            $patch[$key] = $value;
+        }
+        if ($extracted['extra_data'] !== [] || array_key_exists('extra_data', $validated)) {
+            $patch['extra_data'] = array_merge($family->extra_data ?? [], $extracted['extra_data']);
         }
 
-        $family->update($validated);
+        $family->loadMissing('user');
+        if (isset($patch['head_name'])) {
+            $family->user?->update(['name' => $patch['head_name']]);
+        }
+
+        $family->update($patch);
+        if ($extracted['has_date_of_birth'] || array_key_exists('head_gender', $patch)) {
+            $head = $family->members()->where('relationship', 'رب الأسرة')->first();
+            if ($head) {
+                $headPatch = [];
+                if ($extracted['has_date_of_birth']) {
+                    $headPatch['date_of_birth'] = $extracted['date_of_birth'];
+                    $headPatch['age'] = null;
+                }
+                if (array_key_exists('head_gender', $patch) && $patch['head_gender']) {
+                    $headPatch['gender'] = $patch['head_gender'];
+                }
+                if (isset($patch['head_name'])) {
+                    $headPatch['name'] = $patch['head_name'];
+                }
+                if ($headPatch !== []) {
+                    $head->update($headPatch);
+                }
+            }
+        }
         $family->load(['user', 'members']);
 
         return new FamilyResource($family);

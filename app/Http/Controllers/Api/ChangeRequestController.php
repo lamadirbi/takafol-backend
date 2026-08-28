@@ -7,6 +7,7 @@ use App\Http\Resources\ChangeRequestResource;
 use App\Models\ChangeRequest;
 use App\Models\Family;
 use App\Models\FamilyMember;
+use App\Services\FamilyFormSchema;
 use App\Services\WebPushService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -32,6 +33,9 @@ class ChangeRequestController extends Controller
             'payload.family.spouse_national_id' => ['nullable', 'string', 'max:32'],
             'payload.family.original_governorate' => ['nullable', 'string', 'max:64'],
             'payload.family.original_neighborhood' => ['nullable', 'string', 'max:64'],
+            'payload.family.financial_status' => ['nullable', 'string', 'max:16'],
+            'payload.family.total_members' => ['nullable', 'integer', 'min:0', 'max:65535'],
+            'payload.family.extra_data' => ['nullable', 'array'],
             'payload.members' => ['nullable', 'array'],
             'payload.members.add' => ['nullable', 'array'],
             'payload.members.add.*.name' => ['required_with:payload.members.add', 'string', 'max:255'],
@@ -205,18 +209,17 @@ class ChangeRequestController extends Controller
 
             // تحديث بيانات العائلة
             $familyPatch = is_array($payload['family'] ?? null) ? ($payload['family'] ?? []) : [];
-            $familyAllowed = array_intersect_key($familyPatch, array_flip([
-                'head_name',
-                'head_gender',
-                'phone',
-                'social_status',
-                'spouse_name',
-                'spouse_national_id',
-                'original_governorate',
-                'original_neighborhood',
-            ]));
+            $familyAllowed = app(FamilyFormSchema::class)->filterChangeRequestFamily($familyPatch);
+            $extra = [];
+            if (isset($familyAllowed['extra_data']) && is_array($familyAllowed['extra_data'])) {
+                $extra = $familyAllowed['extra_data'];
+                unset($familyAllowed['extra_data']);
+            }
             if (array_key_exists('head_name', $familyAllowed)) {
                 $family->user?->update(['name' => $familyAllowed['head_name']]);
+            }
+            if ($extra !== []) {
+                $familyAllowed['extra_data'] = array_merge($family->extra_data ?? [], $extra);
             }
             if (count($familyAllowed)) {
                 $family->update($familyAllowed);

@@ -6,6 +6,7 @@ use App\Support\TenantCache;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\Storage;
 
 class Camp extends Model
 {
@@ -32,6 +33,7 @@ class Camp extends Model
         'logo_path',
         'is_active',
         'landing_page_data',
+        'family_form_config',
         'primary_admin_user_id',
         'subscription_valid_until',
         'subscription_alerts_sent',
@@ -39,12 +41,55 @@ class Camp extends Model
         'subscription_notice_image_path',
     ];
 
+    protected $appends = [
+        'logo_url',
+    ];
+
     protected $casts = [
         'landing_page_data' => 'array',
+        'family_form_config' => 'array',
         'subscription_alerts_sent' => 'array',
         'is_active' => 'boolean',
         'subscription_valid_until' => 'date',
     ];
+
+    public function getLogoUrlAttribute(): ?string
+    {
+        return $this->logoUrl();
+    }
+
+    public function logoUrl(): ?string
+    {
+        $path = trim((string) $this->logo_path);
+        if ($path === '') {
+            return null;
+        }
+        if (
+            str_starts_with($path, 'http://')
+            || str_starts_with($path, 'https://')
+            || str_starts_with($path, '/')
+        ) {
+            return $path;
+        }
+
+        return asset('storage/'.$path);
+    }
+
+    public function deleteStoredLogo(): void
+    {
+        $path = trim((string) $this->logo_path);
+        if ($path === '') {
+            return;
+        }
+        if (
+            str_starts_with($path, 'http://')
+            || str_starts_with($path, 'https://')
+            || str_starts_with($path, '/')
+        ) {
+            return;
+        }
+        Storage::disk('public')->delete($path);
+    }
 
     public function graceDays(): int
     {

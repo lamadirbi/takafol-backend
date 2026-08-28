@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Family;
 use App\Models\FamilyMember;
 use App\Models\User;
+use App\Services\FamilyFormSchema;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\App;
@@ -41,22 +42,22 @@ class ExcelImportController extends Controller
         ];
     }
 
-    public function familiesTemplate(): StreamedResponse
+    public function familiesTemplate(FamilyFormSchema $schema): StreamedResponse
     {
         $fileName = 'families-import-template.xlsx';
+        $headers = $schema->excelHeaders();
 
-        return response()->streamDownload(function () {
+        return response()->streamDownload(function () use ($headers) {
             $writer = WriterFactory::createFromFile('template.xlsx');
             $writer->openToBrowser('template.xlsx');
 
             $sheet = $writer->getCurrentSheet();
             $sheet->setSheetView((new SheetView)->setRightToLeft(true));
-            $widths = [28, 16, 10, 16, 18, 28, 16, 16, 18, 22, 18];
-            foreach ($widths as $i => $width) {
-                $sheet->setColumnWidth($width, $i + 1);
+            foreach ($headers as $i => $unused) {
+                $sheet->setColumnWidth(18, $i + 1);
             }
 
-            $writer->addRow(Row::fromValues(self::familyImportHeaders()));
+            $writer->addRow(Row::fromValues($headers));
             $writer->close();
         }, $fileName, [
             'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -88,6 +89,7 @@ class ExcelImportController extends Controller
         DB::connection()->disableQueryLog();
 
         DB::transaction(function () use ($reader, &$header, &$created, &$updated, &$skipped, &$usersByNationalId) {
+            $schema = app(FamilyFormSchema::class);
             foreach ($reader->getSheetIterator() as $sheet) {
                 foreach ($sheet->getRowIterator() as $rowIndex => $row) {
                     $cells = [];
@@ -101,7 +103,7 @@ class ExcelImportController extends Controller
                         continue;
                     }
 
-                    $mapped = $this->mapFamilyRow($header ?? [], $cells);
+                    $mapped = $schema->mapImportRow($header ?? [], $cells);
                     if ($mapped === null) {
                         $skipped++;
 
@@ -154,6 +156,7 @@ class ExcelImportController extends Controller
                         'national_id' => $nationalId,
                         'phone' => $mapped['phone'],
                         'social_status' => $mapped['social_status'],
+                        'financial_status' => $mapped['financial_status'] ?? null,
                         'spouse_name' => $mapped['spouse_name'],
                         'spouse_national_id' => $mapped['spouse_national_id'],
                         'total_members' => $mapped['total_members'] ?? 0,
@@ -161,8 +164,9 @@ class ExcelImportController extends Controller
                         'original_governorate' => $mapped['original_governorate'],
                         'original_neighborhood' => $mapped['original_neighborhood'],
                     ];
-
+                    $extra = is_array($mapped['extra_data'] ?? null) ? $mapped['extra_data'] : [];
                     if ($family) {
+                        $payload['extra_data'] = array_merge($family->extra_data ?? [], $extra);
                         $family->update($payload);
                         $updated++;
                     } else {
@@ -171,7 +175,10 @@ class ExcelImportController extends Controller
 
                             continue;
                         }
-                        $family = Family::query()->create($payload);
+                        $family = Family::query()->create([
+                            ...$payload,
+                            'extra_data' => $extra !== [] ? $extra : null,
+                        ]);
                         $created++;
                     }
 

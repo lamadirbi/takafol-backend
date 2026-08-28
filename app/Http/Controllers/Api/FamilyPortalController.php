@@ -24,6 +24,7 @@ class FamilyPortalController extends Controller
 
         return response()->json([
             'family' => new FamilyResource($family),
+            'form_schema' => app(\App\Services\FamilyFormSchema::class)->enabledFields(),
             'current_distributions' => DistributionResource::collection(
                 $family->distributions
                     ->where('status', '!=', 'not_eligible')

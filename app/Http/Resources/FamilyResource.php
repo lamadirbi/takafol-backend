@@ -28,6 +28,7 @@ class FamilyResource extends JsonResource
             'file_status' => $this->file_status,
             'original_governorate' => $this->original_governorate,
             'original_neighborhood' => $this->original_neighborhood,
+            'extra_data' => $this->extra_data ?: (object) [],
             'profile_complete' => $this->profileComplete(),
             'login_serial' => $this->when(
                 $this->relationLoaded('user') && $this->user,

@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\CommentController;
 use App\Http\Controllers\Api\DistributionController;
 use App\Http\Controllers\Api\ExcelImportController;
 use App\Http\Controllers\Api\FamilyController;
+use App\Http\Controllers\Api\FamilyFormSchemaController;
 use App\Http\Controllers\Api\FamilyMemberController;
 use App\Http\Controllers\Api\FamilyPortalController;
 use App\Http\Controllers\Api\PackageTypeController;
@@ -46,6 +47,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/push/instant-channel/test', [PushController::class, 'instantTest']);
 
     Route::middleware(['family_subscription', 'role:'.(User::ROLE_FAMILY_HEAD)])->group(function () {
+        Route::get('/family/form-schema', [FamilyFormSchemaController::class, 'show']);
         Route::get('/family/dashboard', [FamilyPortalController::class, 'dashboard']);
         Route::get('/family/change-requests', [ChangeRequestController::class, 'familyIndex']);
     });
@@ -69,6 +71,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::patch('/admin/camp-registration-requests/{campRegistrationRequest}', [CampRegistrationRequestController::class, 'adminUpdate']);
         Route::get('/admin/dashboard-stats', [FamilyController::class, 'stats']);
         Route::apiResource('admin/families', FamilyController::class);
+        Route::get('/admin/family-form-schema', [FamilyFormSchemaController::class, 'show']);
+        Route::put('/admin/family-form-schema', [FamilyFormSchemaController::class, 'update']);
         Route::get('/admin/import/families-excel-template', [ExcelImportController::class, 'familiesTemplate']);
         Route::post('/admin/import/families-excel', [ExcelImportController::class, 'importFamilies']);
         Route::post('admin/families/{family}/members', [FamilyMemberController::class, 'store']);

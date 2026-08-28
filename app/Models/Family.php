@@ -33,7 +33,12 @@ class Family extends Model
         'file_status',
         'original_governorate',
         'original_neighborhood',
+        'extra_data',
         'camp_id',
+    ];
+
+    protected $casts = [
+        'extra_data' => 'array',
     ];
 
     public function user(): BelongsTo
