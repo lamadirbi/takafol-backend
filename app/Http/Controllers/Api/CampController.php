@@ -34,6 +34,7 @@ class CampController extends Controller
                 'name' => $camp->name,
                 'slug' => $camp->slug,
                 'logo_path' => $camp->logo_path,
+                'logo_url' => $camp->logoUrl(),
                 'families_portal_locked' => $camp->familiesHardBlocked(),
                 'families_in_subscription_grace' => $camp->familiesInGracePeriod(),
             ];

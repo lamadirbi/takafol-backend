@@ -63,4 +63,43 @@ class AnnouncementReactionController extends Controller
             'reaction_counts' => $reactionCounts,
         ]);
     }
+
+    public function index(Request $request, Announcement $announcement): JsonResponse
+    {
+        $user = $request->user();
+        abort_unless($user && $user->isAdmin(), 403);
+        abort_unless(
+            (int) $announcement->admin_user_id === (int) $user->id || $user->isSuper() || $user->isPrimaryCampAdmin(),
+            403,
+            'يمكن لمن أنشأ المنشور عرض من تفاعل عليه.'
+        );
+
+        $rows = $announcement->reactions()
+            ->with('user:id,name,role')
+            ->orderBy('id')
+            ->get();
+
+        $grouped = [
+            AnnouncementReaction::TYPE_LIKE => [],
+            AnnouncementReaction::TYPE_INTERESTED => [],
+            AnnouncementReaction::TYPE_THANKS => [],
+        ];
+
+        foreach ($rows as $row) {
+            $type = (string) $row->type;
+            if (! isset($grouped[$type])) {
+                continue;
+            }
+            $grouped[$type][] = [
+                'id' => $row->user_id,
+                'name' => $row->user?->name ?: 'مستخدم',
+            ];
+        }
+
+        return response()->json([
+            'like' => $grouped[AnnouncementReaction::TYPE_LIKE],
+            'interested' => $grouped[AnnouncementReaction::TYPE_INTERESTED],
+            'thanks' => $grouped[AnnouncementReaction::TYPE_THANKS],
+        ]);
+    }
 }

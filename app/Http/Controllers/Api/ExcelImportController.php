@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Camp;
 use App\Models\Family;
 use App\Models\FamilyMember;
 use App\Models\User;
@@ -85,11 +86,15 @@ class ExcelImportController extends Controller
         $updated = 0;
         $skipped = 0;
         $usersByNationalId = [];
+        $adoptedHeaders = [];
 
         DB::connection()->disableQueryLog();
 
-        DB::transaction(function () use ($reader, &$header, &$created, &$updated, &$skipped, &$usersByNationalId) {
+        DB::transaction(function () use ($reader, &$header, &$created, &$updated, &$skipped, &$usersByNationalId, &$adoptedHeaders) {
             $schema = app(FamilyFormSchema::class);
+            $camp = App::has('current_camp') ? App::get('current_camp') : null;
+            $camp = $camp instanceof Camp ? $camp : null;
+            $enabledKeys = [];
             foreach ($reader->getSheetIterator() as $sheet) {
                 foreach ($sheet->getRowIterator() as $rowIndex => $row) {
                     $cells = [];
@@ -99,11 +104,21 @@ class ExcelImportController extends Controller
 
                     if ($rowIndex === 1) {
                         $header = array_map(fn ($v) => trim((string) $v), $cells);
+                        if ($camp) {
+                            $schema->applyAdoptedConfig($camp, $header);
+                            $camp = $camp->fresh();
+                            App::instance('current_camp', $camp);
+                            $adoptedHeaders = $schema->excelHeaders($camp);
+                            $enabledKeys = array_map(
+                                static fn (array $field): string => (string) $field['key'],
+                                $schema->enabledFields($camp)
+                            );
+                        }
 
                         continue;
                     }
 
-                    $mapped = $schema->mapImportRow($header ?? [], $cells);
+                    $mapped = $schema->mapImportRow($header ?? [], $cells, $camp);
                     if ($mapped === null) {
                         $skipped++;
 
@@ -152,18 +167,25 @@ class ExcelImportController extends Controller
                     $payload = [
                         'user_id' => $user->id,
                         'head_name' => $mapped['head_name'],
-                        'head_gender' => $mapped['head_gender'],
                         'national_id' => $nationalId,
-                        'phone' => $mapped['phone'],
-                        'social_status' => $mapped['social_status'],
-                        'financial_status' => $mapped['financial_status'] ?? null,
-                        'spouse_name' => $mapped['spouse_name'],
-                        'spouse_national_id' => $mapped['spouse_national_id'],
-                        'total_members' => $mapped['total_members'] ?? 0,
-                        'file_status' => $mapped['file_status'],
-                        'original_governorate' => $mapped['original_governorate'],
-                        'original_neighborhood' => $mapped['original_neighborhood'],
                     ];
+                    foreach ([
+                        'head_gender',
+                        'phone',
+                        'social_status',
+                        'financial_status',
+                        'spouse_name',
+                        'spouse_national_id',
+                        'total_members',
+                        'file_status',
+                        'original_governorate',
+                        'original_neighborhood',
+                    ] as $column) {
+                        if (! in_array($column, $enabledKeys, true)) {
+                            continue;
+                        }
+                        $payload[$column] = $mapped[$column] ?? ($column === 'total_members' ? 0 : null);
+                    }
                     $extra = is_array($mapped['extra_data'] ?? null) ? $mapped['extra_data'] : [];
                     if ($family) {
                         $payload['extra_data'] = array_merge($family->extra_data ?? [], $extra);
@@ -195,6 +217,7 @@ class ExcelImportController extends Controller
             'created' => $created,
             'updated' => $updated,
             'skipped' => $skipped,
+            'adopted_headers' => $adoptedHeaders,
         ]);
     }
 

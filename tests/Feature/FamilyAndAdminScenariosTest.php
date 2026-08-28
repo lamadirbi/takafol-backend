@@ -6,6 +6,7 @@ use App\Models\ChangeRequest;
 use App\Models\Distribution;
 use App\Models\FamilyMember;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Storage;
 use Tests\Feature\Concerns\InteractsWithTakafol;
 use Tests\TestCase;
 
@@ -174,6 +175,30 @@ class FamilyAndAdminScenariosTest extends TestCase
             ->assertJsonPath('data.snapshot.families_count', 1);
     }
 
+    public function test_adm05b_save_filter_for_all_families_and_all_members(): void
+    {
+        $camp = $this->makeCamp();
+        $admin = $this->makeCampAdmin($camp);
+        $token = $this->loginAdmin($admin, $camp);
+        $this->makeFamilyWithHead($camp);
+
+        $families = $this->postJson('/api/admin/camp-filter-records', [
+            'name' => 'جميع عائلات المخيم',
+            'filter_scope' => 'family',
+        ], $this->campHeaders($camp, $token));
+
+        $families->assertCreated();
+        $this->assertGreaterThanOrEqual(1, $families->json('data.snapshot.families_count'));
+
+        $members = $this->postJson('/api/admin/camp-filter-records', [
+            'name' => 'جميع الأفراد',
+            'filter_scope' => 'members',
+        ], $this->campHeaders($camp, $token));
+
+        $members->assertCreated();
+        $this->assertGreaterThanOrEqual(1, $members->json('data.snapshot.members_count'));
+    }
+
     public function test_adm06_distributions_bulk_confirm_rollback(): void
     {
         $camp = $this->makeCamp();
@@ -250,6 +275,33 @@ class FamilyAndAdminScenariosTest extends TestCase
         ], $this->campHeaders($camp, $familyToken))
             ->assertOk()
             ->assertJsonPath('active', true);
+
+        $commentId = $this->postJson('/api/announcements/'.$announcementId.'/comments', [
+            'body' => 'تعليق للتعديل',
+        ], $this->campHeaders($camp, $familyToken))->assertCreated()->json('data.id');
+
+        $this->patchJson('/api/announcements/'.$announcementId.'/comments/'.$commentId, [
+            'body' => 'تعليق معدَّل',
+        ], $this->campHeaders($camp, $familyToken))
+            ->assertOk()
+            ->assertJsonPath('data.body', 'تعليق معدَّل');
+
+        $this->postJson('/api/admin/announcements/'.$announcementId, [
+            'title' => 'خبر توزيع محدَّث',
+            'content' => 'سيتم التوزيع بعد غد',
+        ], $this->campHeaders($camp, $adminToken))
+            ->assertOk()
+            ->assertJsonPath('data.title', 'خبر توزيع محدَّث');
+
+        $this->getJson('/api/admin/announcements/'.$announcementId.'/reactions', $this->campHeaders($camp, $adminToken))
+            ->assertOk()
+            ->assertJsonFragment(['name' => $pack['user']->name]);
+
+        $this->getJson('/api/admin/announcements/'.$announcementId.'/reactions', $this->campHeaders($camp, $familyToken))
+            ->assertForbidden();
+
+        $this->deleteJson('/api/announcements/'.$announcementId.'/comments/'.$commentId, [], $this->campHeaders($camp, $familyToken))
+            ->assertNoContent();
 
         $this->deleteJson('/api/admin/announcements/'.$announcementId, [], $this->campHeaders($camp, $adminToken))
             ->assertNoContent();
@@ -375,5 +427,50 @@ class FamilyAndAdminScenariosTest extends TestCase
         $this->getJson('/api/admin/users', $this->campHeaders($camp, $token))
             ->assertOk()
             ->assertJsonFragment(['username' => 'helper-admin']);
+    }
+
+    public function test_adm10_camp_admin_can_upload_and_remove_logo(): void
+    {
+        Storage::fake('public');
+        $camp = $this->makeCamp();
+        $admin = $this->makeCampAdmin($camp);
+        $token = $this->loginAdmin($admin, $camp);
+
+        $this->post('/api/admin/camp/logo', [
+            'logo' => $this->fakeJpeg('logo.png'),
+        ], $this->campHeaders($camp, $token))
+            ->assertOk()
+            ->assertJsonStructure(['logo_path', 'logo_url']);
+
+        $camp->refresh();
+        $this->assertNotEmpty($camp->logo_path);
+        Storage::disk('public')->assertExists($camp->logo_path);
+        $this->assertNotNull($camp->logoUrl());
+
+        $this->getJson('/api/camps/'.$camp->slug)
+            ->assertOk()
+            ->assertJsonPath('logo_path', $camp->logo_path);
+
+        $this->getJson('/api/camps')
+            ->assertOk()
+            ->assertJsonFragment(['slug' => $camp->slug, 'logo_path' => $camp->logo_path]);
+
+        $this->deleteJson('/api/admin/camp/logo', [], $this->campHeaders($camp, $token))
+            ->assertOk()
+            ->assertJsonPath('logo_path', null);
+
+        $this->assertDatabaseHas('camps', ['id' => $camp->id, 'logo_path' => null]);
+    }
+
+    public function test_adm11_family_cannot_upload_camp_logo(): void
+    {
+        Storage::fake('public');
+        $camp = $this->makeCamp();
+        $pack = $this->makeFamilyWithHead($camp);
+        $token = $this->loginFamily($pack['user'], $pack['serial'], $camp);
+
+        $this->post('/api/admin/camp/logo', [
+            'logo' => $this->fakeJpeg('logo.png'),
+        ], $this->campHeaders($camp, $token))->assertForbidden();
     }
 }

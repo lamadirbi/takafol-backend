@@ -102,4 +102,79 @@ class FamilyFormSchemaTest extends TestCase
         $this->assertSame('401234567', $mapped['national_id']);
         $this->assertSame('B-4', $mapped['extra_data']['custom_tent']);
     }
+
+    public function test_excel_headers_become_camp_fields_and_reuse_custom_keys(): void
+    {
+        $camp = $this->makeCamp();
+        $schema = app(FamilyFormSchema::class);
+
+        $first = $schema->adoptFromExcelHeaders([
+            'الاسم',
+            'رقم الهوية',
+            'رقم الخيمة',
+            'ملاحظات',
+        ], $camp);
+
+        $keys = collect($first['fields'])->where('enabled', true)->pluck('key')->all();
+        $this->assertContains('head_name', $keys);
+        $this->assertContains('national_id', $keys);
+        $this->assertNotContains('phone', collect($first['fields'])->where('enabled', true)->pluck('key')->all());
+
+        $custom = collect($first['fields'])->where('source', 'custom')->values();
+        $this->assertCount(2, $custom);
+        $this->assertSame('رقم الخيمة', $custom[0]['excel_header']);
+        $this->assertSame('ملاحظات', $custom[1]['excel_header']);
+        $tentKey = $custom[0]['key'];
+
+        $camp->family_form_config = $first;
+        $camp->save();
+
+        $second = $schema->adoptFromExcelHeaders([
+            'الإسم',
+            'رقم الهوية',
+            'رقم الخيمة',
+        ], $camp->fresh());
+
+        $reused = collect($second['fields'])->firstWhere('excel_header', 'رقم الخيمة');
+        $this->assertSame($tentKey, $reused['key'] ?? null);
+        $this->assertNull(collect($second['fields'])->firstWhere('excel_header', 'ملاحظات'));
+    }
+
+    public function test_importing_existing_excel_adopts_columns_and_stores_extra_data(): void
+    {
+        $camp = $this->makeCamp();
+        $admin = $this->makeCampAdmin($camp);
+        $token = $this->loginAdmin($admin, $camp);
+
+        $path = sys_get_temp_dir().DIRECTORY_SEPARATOR.uniqid('families_', true).'.xlsx';
+        $writer = \OpenSpout\Writer\Common\Creator\WriterFactory::createFromFile($path);
+        $writer->openToFile($path);
+        $writer->addRow(\OpenSpout\Common\Entity\Row::fromValues(['الإسم', 'رقم الهوية', 'رقم الخيمة']));
+        $writer->addRow(\OpenSpout\Common\Entity\Row::fromValues(['خالد محمد', '401234567', 'B-4']));
+        $writer->close();
+
+        $file = new \Illuminate\Http\UploadedFile(
+            $path,
+            'families.xlsx',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            null,
+            true
+        );
+
+        $res = $this->post('/api/admin/import/families-excel', [
+            'file' => $file,
+        ], $this->campHeaders($camp, $token))->assertOk();
+
+        $this->assertSame(1, $res->json('created'));
+        $this->assertContains('رقم الخيمة', $res->json('adopted_headers'));
+
+        $camp->refresh();
+        $custom = collect($camp->family_form_config['fields'] ?? [])->firstWhere('excel_header', 'رقم الخيمة');
+        $this->assertNotEmpty($custom['key'] ?? null);
+
+        $family = Family::query()->where('national_id', '401234567')->first();
+        $this->assertSame('B-4', $family?->extra_data[$custom['key']] ?? null);
+
+        @unlink($path);
+    }
 }

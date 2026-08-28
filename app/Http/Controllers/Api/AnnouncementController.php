@@ -26,7 +26,7 @@ class AnnouncementController extends Controller
             ->with([
                 'adminUser:id,name,role,username,is_super,camp_id,email,national_id,created_at',
                 'comments' => fn ($q) => $q
-                    ->select('id', 'announcement_id', 'user_id', 'body', 'created_at')
+                    ->select('id', 'announcement_id', 'user_id', 'body', 'created_at', 'updated_at')
                     ->orderBy('id'),
                 'comments.user:id,name,role',
             ])
@@ -92,8 +92,75 @@ class AnnouncementController extends Controller
             ->setStatusCode(201);
     }
 
+    public function update(Request $request, Announcement $announcement): JsonResponse
+    {
+        $user = $request->user();
+        abort_unless($user && $user->isAdmin(), 403);
+        abort_unless(
+            (int) $announcement->admin_user_id === (int) $user->id || $user->isSuper() || $user->isPrimaryCampAdmin(),
+            403,
+            'يمكن لمن أنشأ المنشور تعديله.'
+        );
+
+        $data = $request->validate([
+            'title' => ['sometimes', 'required', 'string', 'max:255'],
+            'content' => ['sometimes', 'required', 'string'],
+            'published_at' => ['nullable', 'date'],
+            'image' => ['nullable', 'image', 'max:5120'],
+            'remove_image' => ['nullable', 'boolean'],
+        ]);
+
+        if (array_key_exists('title', $data)) {
+            $announcement->title = $data['title'];
+        }
+        if (array_key_exists('content', $data)) {
+            $announcement->content = $data['content'];
+        }
+        if (array_key_exists('published_at', $data) && $data['published_at']) {
+            $announcement->published_at = $data['published_at'];
+        }
+
+        if ($request->boolean('remove_image') && $announcement->image_path) {
+            Storage::disk('public')->delete($announcement->image_path);
+            $announcement->image_path = null;
+        }
+
+        if ($request->hasFile('image')) {
+            if ($announcement->image_path) {
+                Storage::disk('public')->delete($announcement->image_path);
+            }
+            $announcement->image_path = $request->file('image')->store('announcements', 'public');
+        }
+
+        $announcement->save();
+        $announcement->load([
+            'adminUser:id,name,role,username,is_super,camp_id,email,national_id,created_at',
+            'comments' => fn ($q) => $q
+                ->select('id', 'announcement_id', 'user_id', 'body', 'created_at', 'updated_at')
+                ->orderBy('id'),
+            'comments.user:id,name,role',
+            'reactions' => fn ($q) => $q->where('user_id', $user->id),
+        ]);
+        $announcement->loadCount([
+            'comments',
+            'reactions as reactions_like_count' => fn ($q) => $q->where('type', AnnouncementReaction::TYPE_LIKE),
+            'reactions as reactions_interested_count' => fn ($q) => $q->where('type', AnnouncementReaction::TYPE_INTERESTED),
+            'reactions as reactions_thanks_count' => fn ($q) => $q->where('type', AnnouncementReaction::TYPE_THANKS),
+        ]);
+
+        return (new AnnouncementResource($announcement))->response();
+    }
+
     public function destroy(Announcement $announcement): JsonResponse
     {
+        $user = request()->user();
+        abort_unless($user && $user->isAdmin(), 403);
+        abort_unless(
+            (int) $announcement->admin_user_id === (int) $user->id || $user->isSuper() || $user->isPrimaryCampAdmin(),
+            403,
+            'يمكن لمن أنشأ المنشور حذفه.'
+        );
+
         if ($announcement->image_path) {
             Storage::disk('public')->delete($announcement->image_path);
         }

@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\CampController;
 use App\Http\Controllers\Api\CampFilterRecordController;
 use App\Http\Controllers\Api\CampFilterRecordExportController;
+use App\Http\Controllers\Api\CampLogoController;
 use App\Http\Controllers\Api\CampRegistrationRequestController;
 use App\Http\Controllers\Api\CampSubscriptionNoticeController;
 use App\Http\Controllers\Api\ChangeRequestController;
@@ -60,6 +61,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::middleware(['family_subscription', 'family_no_grace'])->group(function () {
         Route::post('/announcements/{announcement}/reactions/toggle', [AnnouncementReactionController::class, 'toggle']);
         Route::post('/announcements/{announcement}/comments', [CommentController::class, 'store']);
+        Route::patch('/announcements/{announcement}/comments/{comment}', [CommentController::class, 'update']);
+        Route::delete('/announcements/{announcement}/comments/{comment}', [CommentController::class, 'destroy']);
     });
 
     Route::middleware('role:'.(User::ROLE_ADMIN))->group(function () {
@@ -89,8 +92,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/admin/package-types', [PackageTypeController::class, 'index']);
         Route::post('/admin/package-types', [PackageTypeController::class, 'store']);
         Route::post('/admin/announcements', [AnnouncementController::class, 'store']);
+        Route::post('/admin/announcements/{announcement}', [AnnouncementController::class, 'update']);
         Route::delete('/admin/announcements/{announcement}', [AnnouncementController::class, 'destroy']);
+        Route::get('/admin/announcements/{announcement}/reactions', [AnnouncementReactionController::class, 'index']);
         Route::put('/admin/site-settings', [SiteSettingController::class, 'update']);
+        Route::post('/admin/camp/logo', [CampLogoController::class, 'store']);
+        Route::delete('/admin/camp/logo', [CampLogoController::class, 'destroy']);
         Route::post('/admin/camp/subscription-notice-image', [CampSubscriptionNoticeController::class, 'store']);
         Route::delete('/admin/camp/subscription-notice-image', [CampSubscriptionNoticeController::class, 'destroy']);
         Route::get('/admin/camp/subscription-renewal-requests', [SubscriptionRenewalRequestController::class, 'index']);

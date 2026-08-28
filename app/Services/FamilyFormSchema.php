@@ -396,6 +396,106 @@ class FamilyFormSchema
     }
 
     /**
+     * يعتمد حقول المخيم من صف عناوين ملف إكسل قائم.
+     *
+     * @param  list<mixed>  $rawHeaders
+     * @return array{fields: list<array<string, mixed>>}
+     */
+    public function adoptFromExcelHeaders(array $rawHeaders, ?Camp $camp = null): array
+    {
+        $camp ??= $this->currentCamp();
+        $existingCustom = [];
+        foreach ($this->forCamp($camp) as $field) {
+            if (($field['source'] ?? '') !== 'custom') {
+                continue;
+            }
+            $existingCustom[$this->normalizeHeader((string) ($field['excel_header'] ?? ''))] = $field['key'];
+            $existingCustom[$this->normalizeHeader((string) ($field['label'] ?? ''))] = $field['key'];
+        }
+
+        $fields = [];
+        $usedCatalog = [];
+        foreach ($rawHeaders as $raw) {
+            $label = $this->normalizeHeader((string) $raw);
+            if ($label === '') {
+                continue;
+            }
+            $catalogKey = $this->matchCatalogKey($label);
+            if ($catalogKey && ! isset($usedCatalog[$catalogKey])) {
+                $fields[] = [
+                    'key' => $catalogKey,
+                    'enabled' => true,
+                    'required' => in_array($catalogKey, self::LOCKED_KEYS, true),
+                    'source' => 'catalog',
+                ];
+                $usedCatalog[$catalogKey] = true;
+
+                continue;
+            }
+            $customKey = $existingCustom[$label] ?? $this->freshCustomKey($label);
+            $fields[] = [
+                'key' => $customKey,
+                'enabled' => true,
+                'required' => false,
+                'source' => 'custom',
+                'label' => mb_substr($label, 0, 80),
+                'excel_header' => mb_substr($label, 0, 80),
+                'type' => 'text',
+            ];
+            $existingCustom[$label] = $customKey;
+        }
+
+        foreach (array_reverse(self::LOCKED_KEYS) as $locked) {
+            if (isset($usedCatalog[$locked])) {
+                continue;
+            }
+            array_unshift($fields, [
+                'key' => $locked,
+                'enabled' => true,
+                'required' => true,
+                'source' => 'catalog',
+            ]);
+            $usedCatalog[$locked] = true;
+        }
+
+        return $this->normalizeConfig(['fields' => $fields]);
+    }
+
+    /**
+     * @param  list<mixed>  $rawHeaders
+     * @return list<array<string, mixed>>
+     */
+    public function applyAdoptedConfig(Camp $camp, array $rawHeaders): array
+    {
+        $camp->family_form_config = $this->adoptFromExcelHeaders($rawHeaders, $camp);
+        $camp->save();
+
+        return $this->forCamp($camp->fresh());
+    }
+
+    public function matchCatalogKey(string $label): ?string
+    {
+        $normalized = $this->normalizeHeader($label);
+        if ($normalized === '') {
+            return null;
+        }
+        foreach (self::catalog() as $field) {
+            $candidates = [
+                $this->normalizeHeader((string) $field['excel_header']),
+                $this->normalizeHeader((string) $field['label']),
+            ];
+            foreach ($this->headerAliases((string) $field['key']) as $alias) {
+                $candidates[] = $this->normalizeHeader($alias);
+            }
+            if (in_array($normalized, $candidates, true)) {
+                return $field['key'];
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * @return list<string>
      */
     public function excelHeaders(?Camp $camp = null): array
@@ -505,10 +605,18 @@ class FamilyFormSchema
     private function headerAliases(string $key): array
     {
         return match ($key) {
-            'head_name' => ['الإسم', 'الاسم', 'اسم رب الأسرة'],
-            'national_id' => ['رقم الهوية', 'رقم هوية رب الأسرة'],
-            'total_members' => ["عدد افراد\nالاسرة الكلي", 'عدد افراد الاسرة الكلي', 'عدد أفراد الأسرة'],
-            'phone' => ['رقم الموبايل', 'الجوال', 'الهاتف'],
+            'head_name' => ['الإسم', 'الاسم', 'اسم رب الأسرة', 'اسم رب الاسره', 'الاسم الرباعي', 'اسم العائلة', 'اسم'],
+            'national_id' => ['رقم الهوية', 'رقم هوية رب الأسرة', 'رقم هوية رب الاسره', 'الهوية', 'رقم هوية'],
+            'head_gender' => ['الجنس', 'جنس رب الأسرة'],
+            'date_of_birth' => ['تاريخ الميلاد', 'تاريخ الولادة'],
+            'social_status' => ['الحالة الاجتماعية', 'الحاله الاجتماعيه'],
+            'spouse_name' => ['اسم الزوجة رباعي', 'اسم الزوجة', 'اسم الزوج', 'اسم الزوج/الزوجة'],
+            'spouse_national_id' => ['رقم هوية الزوجة', 'رقم هوية الزوج', 'هوية الزوجة'],
+            'total_members' => ["عدد افراد\nالاسرة الكلي", 'عدد افراد الاسرة الكلي', 'عدد أفراد الأسرة', 'عدد الافراد'],
+            'phone' => ['رقم الموبايل', 'الجوال', 'الهاتف', 'رقم الجوال', 'موبايل'],
+            'financial_status' => ['الوضع المادي', 'الوضع المالي'],
+            'original_governorate' => ['العنوان الأصلي- المحافظة', 'المحافظة الأصلية', 'المحافظة', 'المحافظه'],
+            'original_neighborhood' => ['العنوان الأصلي- الحي', 'الحي الأصلي', 'الحي'],
             default => [],
         };
     }
