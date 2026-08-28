@@ -42,24 +42,71 @@ class ExcelImportController extends Controller
         ];
     }
 
+    /**
+     * نموذج فاضي بنفس شكل ملفات المخيم الشائعة (بدون بيانات عائلات).
+     *
+     * @return list<string>
+     */
+    public static function sampleCampSheetHeaders(): array
+    {
+        return [
+            '#',
+            'الاسم رباعي',
+            'رقم الهوية',
+            'اسم الزوجة رباعي',
+            'رقم هوية الزوجة',
+            'رقم الجوال',
+            'عدد افراد الاسرة',
+            'تاريخ الاستلام',
+            'التوقيع',
+        ];
+    }
+
     public function familiesTemplate(FamilyFormSchema $schema): StreamedResponse
     {
-        $fileName = 'families-import-template.xlsx';
-        $headers = $schema->excelHeaders();
+        $camp = App::has('current_camp') ? App::get('current_camp') : null;
+        $camp = $camp instanceof Camp ? $camp : null;
+        $stored = is_array($camp?->family_form_config) ? $camp->family_form_config : [];
+        $hasSavedFields = is_array($stored['fields'] ?? null) && $stored['fields'] !== [];
+        $headers = $hasSavedFields ? $schema->excelHeaders($camp) : self::sampleCampSheetHeaders();
+        $campName = trim((string) ($camp?->name ?? ''));
 
-        return response()->streamDownload(function () use ($headers) {
-            $writer = WriterFactory::createFromFile('template.xlsx');
-            $writer->openToBrowser('template.xlsx');
+        $title = [
+            'اسم المخيم:',
+            '',
+            $campName !== '' ? $campName : '',
+            '',
+            '',
+            '',
+            'العنوان:',
+            '',
+            '',
+        ];
+        while (count($title) < count($headers)) {
+            $title[] = '';
+        }
+        $title = array_slice($title, 0, max(count($headers), 9));
+
+        return response()->streamDownload(function () use ($headers, $title) {
+            $path = sys_get_temp_dir().DIRECTORY_SEPARATOR.uniqid('families_template_', true).'.xlsx';
+            $writer = WriterFactory::createFromFile($path);
+            $writer->openToFile($path);
 
             $sheet = $writer->getCurrentSheet();
             $sheet->setSheetView((new SheetView)->setRightToLeft(true));
-            foreach ($headers as $i => $unused) {
+            $widthCount = max(count($headers), count($title));
+            for ($i = 0; $i < $widthCount; $i++) {
                 $sheet->setColumnWidth(18, $i + 1);
             }
 
+            $writer->addRow(Row::fromValues($title));
             $writer->addRow(Row::fromValues($headers));
+            $writer->addRow(Row::fromValues(array_fill(0, count($headers), '')));
             $writer->close();
-        }, $fileName, [
+
+            readfile($path);
+            @unlink($path);
+        }, 'families-import-template.xlsx', [
             'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         ]);
     }

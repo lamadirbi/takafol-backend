@@ -258,4 +258,35 @@ class FamilyFormSchemaTest extends TestCase
 
         @unlink($path);
     }
+
+    public function test_excel_template_matches_camp_sheet_and_has_no_family_data(): void
+    {
+        $camp = $this->makeCamp(['name' => 'مخيم تجريبي']);
+        $admin = $this->makeCampAdmin($camp);
+        $token = $this->loginAdmin($admin, $camp);
+
+        $res = $this->get('/api/admin/import/families-excel-template', $this->campHeaders($camp, $token))
+            ->assertOk();
+
+        $content = method_exists($res, 'streamedContent') ? $res->streamedContent() : $res->getContent();
+        $this->assertStringStartsWith('PK', $content);
+
+        $path = sys_get_temp_dir().DIRECTORY_SEPARATOR.uniqid('template_', true).'.xlsx';
+        file_put_contents($path, $content);
+
+        $zip = new \ZipArchive();
+        $this->assertTrue($zip->open($path) === true);
+        $sheet = (string) $zip->getFromName('xl/worksheets/sheet1.xml');
+        $shared = (string) $zip->getFromName('xl/sharedStrings.xml');
+        $xml = $sheet.$shared;
+        $zip->close();
+        @unlink($path);
+
+        $this->assertStringContainsString('اسم المخيم', $xml);
+        $this->assertStringContainsString('مخيم تجريبي', $xml);
+        $this->assertStringContainsString('الاسم رباعي', $xml);
+        $this->assertStringContainsString('رقم الهوية', $xml);
+        $this->assertStringNotContainsString('ابتسام', $xml);
+        $this->assertStringNotContainsString('913821955', $xml);
+    }
 }
