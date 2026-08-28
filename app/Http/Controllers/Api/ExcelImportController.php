@@ -90,11 +90,12 @@ class ExcelImportController extends Controller
 
         DB::connection()->disableQueryLog();
 
-        DB::transaction(function () use ($reader, &$header, &$created, &$updated, &$skipped, &$usersByNationalId, &$adoptedHeaders) {
-            $schema = app(FamilyFormSchema::class);
-            $camp = App::has('current_camp') ? App::get('current_camp') : null;
-            $camp = $camp instanceof Camp ? $camp : null;
-            $enabledKeys = [];
+        $schema = app(FamilyFormSchema::class);
+        $camp = App::has('current_camp') ? App::get('current_camp') : null;
+        $camp = $camp instanceof Camp ? $camp : null;
+        $enabledKeys = [];
+
+        try {
             foreach ($reader->getSheetIterator() as $sheet) {
                 foreach ($sheet->getRowIterator() as $rowIndex => $row) {
                     $cells = [];
@@ -147,8 +148,13 @@ class ExcelImportController extends Controller
 
                             continue;
                         }
-                        $user->name = $mapped['head_name'];
-                        $user->save();
+                        if ($user->name !== $mapped['head_name']) {
+                            DB::table('users')->where('id', $user->id)->update([
+                                'name' => $mapped['head_name'],
+                                'updated_at' => now(),
+                            ]);
+                            $user->name = $mapped['head_name'];
+                        }
                     }
 
                     $usersByNationalId[$nationalId] = $user;
@@ -199,9 +205,18 @@ class ExcelImportController extends Controller
                 }
                 break;
             }
-        });
+        } catch (\Throwable $e) {
+            report($e);
 
-        $reader->close();
+            return response()->json([
+                'created' => $created,
+                'updated' => $updated,
+                'skipped' => $skipped,
+                'message' => 'تعذر استيراد الملف بالكامل. حاول مرة ثانية، الصفوف اللي انحفظت رح تنحدث.',
+            ], 500);
+        } finally {
+            $reader->close();
+        }
 
         if ($header === null) {
             return response()->json([
@@ -228,19 +243,19 @@ class ExcelImportController extends Controller
             'national_id' => $nationalId,
             'name' => $headName,
             'email' => null,
-            'password' => '',
+            'password' => 'pending',
             'role' => User::ROLE_FAMILY_HEAD,
             'is_super' => false,
             'camp_id' => $campId,
             'created_at' => $now,
             'updated_at' => $now,
         ]);
+        DB::table('users')->where('id', $id)->update([
+            'password' => password_hash(User::defaultSerialFromId((int) $id), PASSWORD_BCRYPT, ['cost' => 8]),
+            'updated_at' => now(),
+        ]);
 
-        $user = User::withoutGlobalScopes()->findOrFail($id);
-        $user->password = User::defaultSerialFromId((int) $user->id);
-        $user->save();
-
-        return $user;
+        return User::withoutGlobalScopes()->findOrFail($id);
     }
 
     /**
