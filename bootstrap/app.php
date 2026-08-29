@@ -15,6 +15,7 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->trustProxies(at: '*');
+        $middleware->append(\App\Http\Middleware\DenyFraming::class);
         $middleware->append(\App\Http\Middleware\TenantMiddleware::class);
         $middleware->alias([
             'auth' => \App\Http\Middleware\ApiAuthenticate::class,
