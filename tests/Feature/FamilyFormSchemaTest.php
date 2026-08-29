@@ -352,4 +352,50 @@ class FamilyFormSchemaTest extends TestCase
 
         @unlink($path);
     }
+
+    public function test_family_can_complete_filter_fields_even_if_schema_hides_them(): void
+    {
+        $camp = $this->makeCamp([
+            'family_form_config' => [
+                'fields' => [
+                    ['key' => 'national_id', 'enabled' => true, 'required' => true, 'source' => 'catalog'],
+                    ['key' => 'head_name', 'enabled' => true, 'required' => true, 'source' => 'catalog'],
+                    ['key' => 'social_status', 'enabled' => false, 'required' => false, 'source' => 'catalog'],
+                    ['key' => 'head_gender', 'enabled' => false, 'required' => false, 'source' => 'catalog'],
+                    ['key' => 'financial_status', 'enabled' => false, 'required' => false, 'source' => 'catalog'],
+                ],
+            ],
+        ]);
+        $admin = $this->makeCampAdmin($camp);
+        $adminToken = $this->loginAdmin($admin, $camp);
+        $pack = $this->makeFamilyWithHead($camp, [
+            'social_status' => null,
+            'head_gender' => null,
+            'financial_status' => null,
+        ]);
+        $familyToken = $this->loginFamily($pack['user'], $pack['serial'], $camp);
+
+        $created = $this->postJson('/api/family/change-requests', [
+            'payload' => [
+                'family' => [
+                    'social_status' => 'widowed',
+                    'head_gender' => 'female',
+                    'financial_status' => 'low',
+                ],
+            ],
+        ], $this->campHeaders($camp, $familyToken))->assertCreated();
+
+        $this->postJson(
+            '/api/admin/change-requests/'.$created->json('data.id').'/approve',
+            ['review_note' => 'تمام'],
+            $this->campHeaders($camp, $adminToken)
+        )->assertOk();
+
+        $this->assertDatabaseHas('families', [
+            'id' => $pack['family']->id,
+            'social_status' => 'widowed',
+            'head_gender' => 'female',
+            'financial_status' => 'low',
+        ]);
+    }
 }

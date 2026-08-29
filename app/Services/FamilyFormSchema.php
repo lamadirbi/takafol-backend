@@ -11,6 +11,9 @@ class FamilyFormSchema
 {
     public const LOCKED_KEYS = ['national_id', 'head_name'];
 
+    /** Always accepted on family change-requests so filters can be completed without a full form. */
+    public const FILTER_CRITERIA_KEYS = ['social_status', 'head_gender', 'financial_status'];
+
     public const EXTRA_MEMBER_SLOTS = 6;
 
     /**
@@ -651,6 +654,7 @@ class FamilyFormSchema
     public function filterChangeRequestFamily(array $payload, ?Camp $camp = null): array
     {
         $allowed = [];
+        $keys = [];
         foreach ($this->enabledFields($camp) as $field) {
             $key = $field['key'];
             if ($key === 'national_id' || $key === 'date_of_birth') {
@@ -659,6 +663,12 @@ class FamilyFormSchema
             if (($field['source'] ?? 'catalog') === 'custom') {
                 continue;
             }
+            $keys[$key] = true;
+        }
+        foreach (self::FILTER_CRITERIA_KEYS as $key) {
+            $keys[$key] = true;
+        }
+        foreach (array_keys($keys) as $key) {
             if (array_key_exists($key, $payload)) {
                 $allowed[$key] = $payload[$key];
             }
