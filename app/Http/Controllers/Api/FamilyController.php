@@ -82,6 +82,10 @@ class FamilyController extends Controller
                     ->whereNotNull('social_status')
                     ->where('social_status', '!=', '')
                     ->count(),
+                'financial_status' => Family::query()
+                    ->whereNotNull('financial_status')
+                    ->where('financial_status', '!=', '')
+                    ->count(),
                 'total_members' => Family::query()->where('total_members', '>', 0)->count(),
                 'member_age' => FamilyMember::query()
                     ->where(function (Builder $q) {

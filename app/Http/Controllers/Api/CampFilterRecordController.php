@@ -279,8 +279,10 @@ class CampFilterRecordController extends Controller
     {
         return [
             'filter_scope' => ['nullable', 'string', Rule::in(['family', 'members'])],
-            'social_status' => ['nullable', 'string', 'max:64'],
-            'financial_status' => ['nullable', 'string', 'max:64'],
+            'social_status' => ['nullable', 'string', Rule::in(['married', 'widowed', 'divorced', 'abandoned', 'separated', 'single'])],
+            'social_statuses' => ['nullable', 'array'],
+            'social_statuses.*' => ['string', Rule::in(['married', 'widowed', 'divorced', 'abandoned', 'separated', 'single'])],
+            'financial_status' => ['nullable', 'string', Rule::in(['low', 'medium', 'good'])],
             'members_min' => ['nullable', 'integer', 'min:0'],
             'members_max' => ['nullable', 'integer', 'min:0'],
             'has_newborn' => ['nullable', 'boolean'],

@@ -153,7 +153,11 @@ class Family extends Model
             if ($withMembers) {
                 $query->with(['members' => self::constrainMemberListColumns(...)]);
             }
-            $query->socialStatus($request->input('social_status'));
+            $socials = $request->input('social_statuses');
+            if (! is_array($socials) || $socials === []) {
+                $socials = $request->input('social_status');
+            }
+            $query->socialStatuses($socials);
             $query->financialStatus($request->input('financial_status'));
 
             $membersMin = $request->input('members_min');
@@ -190,13 +194,50 @@ class Family extends Model
         $query->select(self::MEMBER_LIST_COLUMNS);
     }
 
+    /**
+     * مطلق يشمل السجلات القديمة «منفصل» و«أعزب».
+     *
+     * @return list<string>
+     */
+    public static function expandSocialStatusFilter(string $status): array
+    {
+        $canonical = match ($status) {
+            'separated', 'single', 'منفصل', 'منفصلة' => 'divorced',
+            default => $status,
+        };
+
+        if ($canonical === 'divorced') {
+            return ['divorced', 'separated', 'single'];
+        }
+
+        return [$canonical];
+    }
+
     public function scopeSocialStatus(Builder $query, ?string $status): Builder
     {
-        if ($status === null || $status === '') {
+        return $query->socialStatuses($status);
+    }
+
+    public function scopeSocialStatuses(Builder $query, mixed $statuses): Builder
+    {
+        $list = is_array($statuses) ? $statuses : ($statuses !== null && $statuses !== '' ? [$statuses] : []);
+        $list = array_values(array_filter(
+            array_map(static fn ($v) => trim((string) $v), $list),
+            static fn ($v) => $v !== ''
+        ));
+
+        if ($list === []) {
             return $query;
         }
 
-        return $query->where('social_status', $status);
+        $expanded = [];
+        foreach ($list as $status) {
+            foreach (self::expandSocialStatusFilter($status) as $value) {
+                $expanded[$value] = true;
+            }
+        }
+
+        return $query->whereIn('social_status', array_keys($expanded));
     }
 
     public function scopeFinancialStatus(Builder $query, ?string $status): Builder

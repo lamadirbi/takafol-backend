@@ -144,6 +144,32 @@ class FamilyAndAdminScenariosTest extends TestCase
         $this->assertSame(1, $saved->json('data.snapshot.families_count'));
     }
 
+    public function test_adm04b_social_statuses_match_legacy_separated_and_financial_filter(): void
+    {
+        $camp = $this->makeCamp();
+        $admin = $this->makeCampAdmin($camp);
+        $token = $this->loginAdmin($admin, $camp);
+        $headers = $this->campHeaders($camp, $token);
+
+        $this->makeFamilyWithHead($camp, ['social_status' => 'separated', 'financial_status' => 'low']);
+        $this->makeFamilyWithHead($camp, ['social_status' => 'widowed', 'financial_status' => 'good']);
+        $this->makeFamilyWithHead($camp, ['social_status' => 'married', 'financial_status' => 'low']);
+
+        $this->postJson('/api/admin/camp-filter-records/preview', [
+            'filter_scope' => 'family',
+            'social_statuses' => ['divorced', 'widowed'],
+        ], $headers)
+            ->assertOk()
+            ->assertJsonPath('data.snapshot.families_count', 2);
+
+        $this->postJson('/api/admin/camp-filter-records/preview', [
+            'filter_scope' => 'family',
+            'financial_status' => 'low',
+        ], $headers)
+            ->assertOk()
+            ->assertJsonPath('data.snapshot.families_count', 2);
+    }
+
     public function test_adm05_member_age_filter_on_sqlite(): void
     {
         $camp = $this->makeCamp();

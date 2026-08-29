@@ -335,8 +335,7 @@ class ExcelImportController extends Controller
         $social = match ($socialAr) {
             'متزوج' => 'married',
             'أرمل', 'أرملة' => 'widowed',
-            'منفصل', 'منفصلة' => 'separated',
-            'مطلق', 'مطلقة' => 'divorced',
+            'منفصل', 'منفصلة', 'مطلق', 'مطلقة' => 'divorced',
             'مهجور', 'مهجورة' => 'abandoned',
             default => null,
         };

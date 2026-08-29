@@ -144,8 +144,7 @@ class CampFilterRecordExportController extends Controller
         return match ($value) {
             'married' => 'متزوج',
             'widowed' => 'أرمل',
-            'separated' => 'منفصل',
-            'divorced' => 'مطلق',
+            'separated', 'divorced', 'single' => 'مطلق',
             'abandoned' => 'مهجور',
             default => '',
         };

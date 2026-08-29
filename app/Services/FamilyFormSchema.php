@@ -77,7 +77,6 @@ class FamilyFormSchema
                 'options' => [
                     ['value' => 'married', 'label' => 'متزوج'],
                     ['value' => 'widowed', 'label' => 'أرمل'],
-                    ['value' => 'separated', 'label' => 'منفصل'],
                     ['value' => 'divorced', 'label' => 'مطلق'],
                     ['value' => 'abandoned', 'label' => 'مهجور'],
                 ],
@@ -943,8 +942,7 @@ class FamilyFormSchema
         return match ($s) {
             'married', 'متزوج' => 'married',
             'widowed', 'أرمل', 'أرملة' => 'widowed',
-            'separated', 'منفصل', 'منفصلة' => 'separated',
-            'divorced', 'مطلق', 'مطلقة' => 'divorced',
+            'separated', 'منفصل', 'منفصلة', 'divorced', 'مطلق', 'مطلقة', 'single' => 'divorced',
             'abandoned', 'مهجور', 'مهجورة' => 'abandoned',
             default => $s !== '' ? $s : null,
         };

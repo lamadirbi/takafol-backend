@@ -818,7 +818,7 @@ class DemoDataSeeder extends Seeder
                 'head_name' => 'عبدالله الشهري',
                 'head_gender' => FamilyMember::GENDER_MALE,
                 'phone' => '0594444444',
-                'social_status' => 'separated',
+                'social_status' => 'divorced',
                 'financial_status' => 'low',
                 'file_status' => 'معلق',
                 'original_governorate' => 'شمال غزة',
@@ -984,7 +984,7 @@ class DemoDataSeeder extends Seeder
      */
     private function generatedFamilies(int $count, int $baseNid, int $basePhone, string $prefix): array
     {
-        $social = ['married', 'widowed', 'separated', 'abandoned', 'married'];
+        $social = ['married', 'widowed', 'divorced', 'abandoned', 'married'];
         $financial = ['low', 'medium', 'good'];
         $fileStatuses = ['جاري', 'مكتمل', 'معلق'];
         $firstNamesMale = ['أحمد', 'محمود', 'خالد', 'يوسف', 'عمر', 'سليم', 'فادي', 'باسم', 'رامي', 'طارق'];
